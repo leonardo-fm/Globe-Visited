@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Been There</title>
+<style>
+  :root {
+    --ocean:    #1b4b8f;
+    --land:     #8a8a8a;
+    --visited:  #ff8c1a;
+    --border:   #33333a;
+    --bg:       #05070f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg); color: #e8e8ee; overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior: none;
+  }
+  #globe { position: fixed; inset: 0; }
+  /* indispensabile: senza questo il pinch lo intercetta la pagina, non OrbitControls */
+  #globe canvas { touch-action: none; display: block; }
+
+  /* --- chrome HTML: in Android sarà rimpiazzata dalla UI Compose (vedi DEMO_UI) --- */
+  #ui { position: fixed; top: 0; left: 0; right: 0; padding: 12px; z-index: 10;
+        display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  #ui > * { pointer-events: auto; }
+  #counter { align-self: flex-start; font-size: 15px; font-weight: 600; letter-spacing: .2px;
+             background: rgba(5,7,15,.72); border: 1px solid #23232c; border-radius: 999px;
+             padding: 7px 14px; backdrop-filter: blur(6px); }
+  #counter b { color: var(--visited); }
+  #searchWrap { position: relative; max-width: 520px; width: 100%; }
+  #search { width: 100%; font: inherit; font-size: 15px; color: #e8e8ee;
+            background: rgba(5,7,15,.72); border: 1px solid #23232c; border-radius: 12px;
+            padding: 11px 14px; outline: none; backdrop-filter: blur(6px); }
+  #search:focus { border-color: var(--visited); }
+  #search::placeholder { color: #7b7b88; }
+  #results { position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: 46vh;
+             overflow-y: auto; -webkit-overflow-scrolling: touch;
+             background: rgba(9,12,22,.96); border: 1px solid #23232c; border-radius: 12px;
+             display: none; }
+  #results.open { display: block; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer;
+         border-bottom: 1px solid #17171f; }
+  .row:last-child { border-bottom: 0; }
+  .row:hover, .row.sel { background: #141a2b; }
+  .row .nm { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .cc { font-size: 11px; color: #6f6f7d; font-variant-numeric: tabular-nums; }
+  .row .tg { flex: none; width: 30px; height: 30px; border-radius: 8px; border: 1px solid #2b2b36;
+             background: transparent; cursor: pointer; display: grid; place-items: center; }
+  .row .tg i { width: 12px; height: 12px; border-radius: 50%; background: var(--land); display: block; }
+  .row.on .tg i { background: var(--visited); }
+  .row.on .tg { border-color: var(--visited); }
+  .empty { padding: 12px; font-size: 13px; color: #7b7b88; }
+
+  #status { position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
+            background: var(--bg); padding: 24px; text-align: center; font-size: 14px; line-height: 1.6; }
+  #status.hidden { display: none; }
+  #status code { background: #12121a; padding: 2px 6px; border-radius: 4px; color: #ffb066; }
+  #status .err { color: #ff6b6b; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="globe"></div>
+
+<div id="ui" hidden>
+  <div id="counter">&mdash; / &mdash; paesi</div>
+  <div id="searchWrap">
+    <input id="search" type="search" autocomplete="off" autocorrect="off" autocapitalize="off"
+           spellcheck="false" placeholder="Cerca un paese…">
+    <div id="results"></div>
+  </div>
+</div>
+
+<div id="status">Caricamento del globo…</div>
+
+<script src="globe.gl.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------------ config
+  var OCEAN   = '#1b4b8f';
+  var LAND    = '#8a8a8a';
+  var VISITED = '#ff8c1a';
+  var BORDER  = '#33333a';
+  var BG      = '#05070f';
+
+  // Altitudine COSTANTE dei poligoni. Non deve mai dipendere da "visitato":
+  // in three-globe la geometria viene ricostruita solo se cambia l'altitudine,
+  // quindi tenendola fissa il toggle aggiorna esclusivamente il materiale.
+  var POLY_ALT = 0.006;
+
+  // Su Android la chrome HTML resta spenta: contatore, ricerca e lista li fa
+  // Compose parlando con window.BeenThere.*, e la verità sta in DataStore.
+  // Nel browser desktop AndroidBridge non esiste, quindi il prototipo resta
+  // pienamente usabile senza toccare un flag.
+  var HAS_NATIVE = (typeof window.AndroidBridge !== 'undefined');
+  var DEMO_UI = !HAS_NATIVE;
+  var DEMO_PERSISTENCE = !HAS_NATIVE;
+  var LS_KEY = 'beenthere.visited.demo';
+
+  // Se resta null, il denominatore è il numero di poligoni realmente presenti
+  // nel GeoJSON (non 195 - vedi note).
+  var TOTAL_OVERRIDE = null;
+
+  // ------------------------------------------------------------------- stato
+  var world = null;
+  var features = [];
+  var byKey = Object.create(null);     // chiave paese -> feature
+  var visited = new Set();
+  var searchIndex = [];                // { key, label, hay, feat }
+  var selIdx = -1;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var statusEl = $('status');
+
+  function fail(msg, hint) {
+    statusEl.classList.remove('hidden');
+    statusEl.innerHTML = '<div><div class="err">' + msg + '</div>' + (hint || '') + '</div>';
+  }
+
+  // --------------------------------------------------- identità di un paese
+  // Natural Earth mette ISO_A3 = "-99" per Kosovo, Cipro del Nord, Somaliland
+  // e, in alcune release, anche per Francia e Norvegia. Usando ISO_A3 nudo
+  // finirebbero tutti sulla stessa chiave e si colorerebbero insieme.
+  // Questa è l'UNICA funzione di identificazione usata in tutta l'app.
+  function rawProp(props, names) {
+    for (var i = 0; i < names.length; i++) {
+      var n = names[i];
+      var v = props[n];
+      if (v == null) v = props[n.toLowerCase()];
+      if (v == null) v = props[n.toUpperCase()];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return null;
+  }
+  function isBadCode(v) { return !v || v === '-99' || v === '-099' || v === '099'; }
+
+  function countryKey(feat) {
+    if (feat.__key) return feat.__key;
+    var p = feat.properties || {};
+    var cands = [
+      rawProp(p, ['ISO_A3']),
+      rawProp(p, ['ISO_A3_EH']),
+      rawProp(p, ['ADM0_A3']),
+      rawProp(p, ['SOV_A3'])
+    ];
+    var key = null;
+    for (var i = 0; i < cands.length; i++) {
+      if (!isBadCode(cands[i])) { key = cands[i].toUpperCase(); break; }
+    }
+    if (!key) {
+      // ultima spiaggia: nome normalizzato, prefissato per non collidere con un ISO
+      var nm = rawProp(p, ['NAME', 'NAME_LONG', 'ADMIN', 'BRK_NAME']) || 'UNKNOWN';
+      key = 'X_' + norm(nm).replace(/[^a-z0-9]+/g, '_').toUpperCase();
+    }
+    feat.__key = key;
+    return key;
+  }
+
+  function countryNameEn(feat) {
+    var p = feat.properties || {};
+    return rawProp(p, ['NAME']) || rawProp(p, ['NAME_LONG']) ||
+           rawProp(p, ['ADMIN']) || countryKey(feat);
+  }
+  // Dove NAME_IT manca nel dataset si ricade sul nome inglese.
+  function countryNameIt(feat) {
+    return rawProp(feat.properties || {}, ['NAME_IT']) || countryNameEn(feat);
+  }
+  function countryName(feat) { return countryNameIt(feat); }
+
+  // Catalogo completo, passato una volta sola a Kotlin: da qui Compose ricava
+  // l'indice di ricerca e il denominatore del contatore.
+  function catalogJson() {
+    return JSON.stringify(features.map(function (f) {
+      return {
+        code: countryKey(f),
+        nameIt: countryNameIt(f),
+        nameEn: countryNameEn(f)
+      };
+    }));
+  }
+
+  // classe dei segni diacritici combinanti, costruita senza escape letterali
+  var DIACRITICS = new RegExp('[' + String.fromCharCode(768) + '-' + String.fromCharCode(879) + ']', 'g');
+  function norm(s) {
+    return String(s).normalize('NFD').replace(DIACRITICS, '').toLowerCase();
+  }
+
+  // -------------------------------------------------------------- geometria
+  function outerRings(geom) {
+    if (!geom) return [];
+    if (geom.type === 'Polygon') return [geom.coordinates[0]];
+    if (geom.type === 'MultiPolygon') return geom.coordinates.map(function (poly) { return poly[0]; });
+    return [];
+  }
+  function ringArea(r) {
+    var a = 0;
+    for (var i = 0, j = r.length - 1; i < r.length; j = i++) {
+      a += r[j][0] * r[i][1] - r[i][0] * r[j][1];
+    }
+    return Math.abs(a / 2);
+  }
+  // Centroide dell'anello più grande: evita che Russia/USA/Fiji (antimeridiano)
+  // finiscano centrati in mezzo all'oceano da un banale centro di bounding box.
+  function focusOf(feat) {
+    if (feat.__focus) return feat.__focus;
+    var rings = outerRings(feat.geometry), best = null, bestA = -1;
+    for (var i = 0; i < rings.length; i++) {
+      var a = ringArea(rings[i]);
+      if (a > bestA) { bestA = a; best = rings[i]; }
+    }
+    var lat = 0, lng = 0, alt = 1.2;
+    if (best && best.length) {
+      var x = 0, y = 0, a2 = 0;
+      for (var k = 0, j = best.length - 1; k < best.length; j = k++) {
+        var f = best[j][0] * best[k][1] - best[k][0] * best[j][1];
+        a2 += f; x += (best[j][0] + best[k][0]) * f; y += (best[j][1] + best[k][1]) * f;
+      }
+      a2 *= 0.5;
+      if (Math.abs(a2) > 1e-12) { lng = x / (6 * a2); lat = y / (6 * a2); }
+      else { lng = best[0][0]; lat = best[0][1]; }
+
+      var minX = 180, maxX = -180, minY = 90, maxY = -90;
+      for (var m = 0; m < best.length; m++) {
+        var c = best[m];
+        if (c[0] < minX) minX = c[0];
+        if (c[0] > maxX) maxX = c[0];
+        if (c[1] < minY) minY = c[1];
+        if (c[1] > maxY) maxY = c[1];
+      }
+      var span = Math.max((maxX - minX) * Math.cos(lat * Math.PI / 180), maxY - minY);
+      alt = Math.min(2.0, Math.max(0.22, span / 22));
+    }
+    feat.__focus = { lat: lat, lng: lng, altitude: alt };
+    return feat.__focus;
+  }
+
+  // ------------------------------------------------------------ colorazione
+  function capColor(feat) { return visited.has(countryKey(feat)) ? VISITED : LAND; }
+
+  // Ridipingere = ri-assegnare l'accessor del colore. three-globe rientra nel
+  // digest, riusa gli oggetti già in scena e tocca solo il materiale: la
+  // geometria non viene rigenerata perché POLY_ALT è costante.
+  // Wrapper nuovo a ogni chiamata: così il set del prop scatta sempre.
+  function repaint() {
+    if (world) world.polygonCapColor(function (f) { return capColor(f); });
+  }
+
+  // -------------------------------------------------------- ponte con Kotlin
+  function bridge() {
+    return (typeof window.AndroidBridge !== 'undefined') ? window.AndroidBridge : null;
+  }
+  function notifyToggle(key, isVisited) {
+    var b = bridge();
+    if (b && typeof b.onCountryToggled === 'function') {
+      try { b.onCountryToggled(key, isVisited); } catch (e) { console.warn('bridge', e); }
+    }
+  }
+
+  function applyToggle(key) {
+    if (!byKey[key]) return;
+    var now = !visited.has(key);
+    if (now) visited.add(key); else visited.delete(key);
+    repaint();
+    updateCounter();
+    refreshRowStates();
+    saveDemo();
+    notifyToggle(key, now);   // Kotlin persiste; può ri-pushare con setVisited()
+  }
+
+  // --------------------------------------------------------------- contatore
+  function total() { return TOTAL_OVERRIDE != null ? TOTAL_OVERRIDE : features.length; }
+  function updateCounter() {
+    var el = $('counter');
+    if (el) el.innerHTML = '<b>' + visited.size + '</b> / ' + total() + ' paesi';
+  }
+
+  function saveDemo() {
+    if (!DEMO_PERSISTENCE) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify(Array.from(visited))); } catch (e) {}
+  }
+  function loadDemo() {
+    if (!DEMO_PERSISTENCE) return;
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (raw) JSON.parse(raw).forEach(function (k) { if (byKey[k]) visited.add(k); });
+    } catch (e) {}
+  }
+
+  // ----------------------------------------------------------------- ricerca
+  function buildSearchIndex() {
+    searchIndex = features.map(function (f) {
+      var p = f.properties || {}, key = countryKey(f);
+      var alts = [
+        rawProp(p, ['NAME_IT']), rawProp(p, ['NAME']), rawProp(p, ['NAME_LONG']),
+        rawProp(p, ['ADMIN']), rawProp(p, ['BRK_NAME']), rawProp(p, ['FORMAL_EN']),
+        rawProp(p, ['NAME_EN']), rawProp(p, ['NAME_ES']), rawProp(p, ['NAME_FR']),
+        rawProp(p, ['NAME_DE']), rawProp(p, ['ISO_A2']), key
+      ].filter(Boolean);
+      return { key: key, label: countryName(f), hay: norm(alts.join(' | ')), feat: f };
+    }).sort(function (a, b) { return a.label.localeCompare(b.label); });
+  }
+
+  function searchCountries(q, limit) {
+    var n = norm(String(q || '').trim());
+    if (!n) return [];
+    var starts = [], contains = [];
+    for (var i = 0; i < searchIndex.length; i++) {
+      var e = searchIndex[i], pos = e.hay.indexOf(n);
+      if (pos < 0) continue;
+      // inizio di una parola qualsiasi pesa più di un match a metà parola
+      if (pos === 0 || /[\s|(-]/.test(e.hay.charAt(pos - 1))) starts.push(e);
+      else contains.push(e);
+    }
+    return starts.concat(contains).slice(0, limit || 12);
+  }
+
+  function flyTo(key, ms) {
+    var f = byKey[key];
+    if (!f || !world) return false;
+    world.pointOfView(focusOf(f), ms == null ? 900 : ms);
+    return true;
+  }
+
+  // ----------------------------------------------------------------- UI demo
+  var resultsEl, searchEl, lastResults = [];
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function renderResults(list) {
+    lastResults = list; selIdx = list.length ? 0 : -1;
+    if (!list.length) {
+      resultsEl.innerHTML = '<div class="empty">Nessun paese trovato.</div>';
+      resultsEl.classList.add('open');
+      return;
+    }
+    resultsEl.innerHTML = list.map(function (e, i) {
+      return '<div class="row' + (visited.has(e.key) ? ' on' : '') + (i === selIdx ? ' sel' : '') +
+             '" data-key="' + e.key + '">' +
+             '<span class="nm">' + escapeHtml(e.label) + '</span>' +
+             '<span class="cc">' + escapeHtml(e.key) + '</span>' +
+             '<button class="tg" type="button" data-toggle="1" ' +
+             'aria-label="Segna come visitato"><i></i></button></div>';
+    }).join('');
+    resultsEl.classList.add('open');
+  }
+  function refreshRowStates() {
+    if (!resultsEl) return;
+    Array.prototype.forEach.call(resultsEl.querySelectorAll('.row'), function (r) {
+      r.classList.toggle('on', visited.has(r.getAttribute('data-key')));
+    });
+  }
+  function closeResults() {
+    if (resultsEl) { resultsEl.classList.remove('open'); lastResults = []; selIdx = -1; }
+  }
+
+  function wireUi() {
+    $('ui').hidden = false;
+    resultsEl = $('results');
+    searchEl = $('search');
+
+    searchEl.addEventListener('input', function () {
+      var q = searchEl.value.trim();
+      if (!q) { closeResults(); return; }
+      renderResults(searchCountries(q, 12));
+    });
+    searchEl.addEventListener('keydown', function (ev) {
+      if (!lastResults.length) return;
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        selIdx = (selIdx + (ev.key === 'ArrowDown' ? 1 : -1) + lastResults.length) % lastResults.length;
+        Array.prototype.forEach.call(resultsEl.querySelectorAll('.row'), function (r, i) {
+          r.classList.toggle('sel', i === selIdx);
+        });
+      } else if (ev.key === 'Enter' && selIdx >= 0) {
+        ev.preventDefault();
+        flyTo(lastResults[selIdx].key);
+        searchEl.blur(); closeResults();
+      } else if (ev.key === 'Escape') {
+        closeResults(); searchEl.blur();
+      }
+    });
+
+    // click sulla riga -> vola sul paese; click sul pallino -> toggle visitato.
+    // Il toggle da lista è la via di selezione per gli stati troppo piccoli
+    // da colpire con il dito sul globo.
+    resultsEl.addEventListener('click', function (ev) {
+      var row = ev.target.closest ? ev.target.closest('.row') : null;
+      if (!row) return;
+      var key = row.getAttribute('data-key');
+      if (ev.target.closest('[data-toggle]')) { ev.stopPropagation(); applyToggle(key); return; }
+      flyTo(key); closeResults(); searchEl.blur();
+    });
+
+    document.addEventListener('pointerdown', function (ev) {
+      if (!$('searchWrap').contains(ev.target)) closeResults();
+    });
+  }
+
+  // ---------------------------------------------------------------- avvio
+  function initGlobe(geojson) {
+    features = (geojson.features || []).filter(function (f) { return f.geometry; });
+    if (!features.length) { fail('Il GeoJSON non contiene feature.'); return; }
+
+    var seen = Object.create(null), collisions = [];
+    features.forEach(function (f) {
+      var k = countryKey(f);
+      if (seen[k]) collisions.push(k + ' -> ' + seen[k] + ' / ' + countryName(f));
+      seen[k] = countryName(f);
+      byKey[k] = f;
+    });
+    if (collisions.length) {
+      console.warn('[BeenThere] chiavi paese duplicate (si colorerebbero insieme):', collisions);
+    }
+    console.log('[BeenThere] paesi caricati:', features.length);
+
+    buildSearchIndex();
+    loadDemo();
+
+    world = Globe()(document.getElementById('globe'))
+      .backgroundColor(BG)
+      .showAtmosphere(true)
+      .atmosphereColor('#5b8fd6')
+      .atmosphereAltitude(0.15)
+      .polygonsData(features)
+      .polygonAltitude(POLY_ALT)                 // costante: nessun rebuild al toggle
+      .polygonCapColor(function (f) { return capColor(f); })
+      .polygonSideColor(function () { return 'rgba(0,0,0,0)'; })
+      .polygonStrokeColor(function () { return BORDER; })
+      .polygonsTransitionDuration(0)             // niente tween -> niente geometrie rigenerate
+      .onPolygonClick(function (f) { if (f) applyToggle(countryKey(f)); })
+      .onPolygonHover(function (f) { document.body.style.cursor = f ? 'pointer' : 'default'; });
+
+    // oceano
+    try {
+      var mat = world.globeMaterial();
+      mat.color.set(OCEAN);
+      if (mat.emissive) { mat.emissive.set(OCEAN); mat.emissiveIntensity = 0.28; }
+      if ('shininess' in mat) mat.shininess = 3;
+    } catch (e) { console.warn('globeMaterial', e); }
+
+    // Illuminazione quasi piatta: con la luce di default il lato in ombra
+    // falserebbe i colori richiesti (#8a8a8a / #ff8c1a).
+    try {
+      (world.lights() || []).forEach(function (l) {
+        if (l.isAmbientLight) l.intensity = 3.4;
+        else if (l.isDirectionalLight) l.intensity = 0.35;
+      });
+    } catch (e) { console.warn('lights', e); }
+
+    try {
+      var c = world.controls();
+      c.enableDamping = true; c.dampingFactor = 0.12;
+      c.rotateSpeed = 0.6; c.zoomSpeed = 0.8;
+      c.minDistance = 130; c.maxDistance = 700;   // limiti di zoom / pinch
+      c.enablePan = false;
+    } catch (e) { console.warn('controls', e); }
+
+    function resize() { world.width(window.innerWidth).height(window.innerHeight); }
+    window.addEventListener('resize', resize);
+    resize();
+    world.pointOfView({ lat: 25, lng: 10, altitude: 2.4 }, 0);
+
+    if (DEMO_UI) wireUi();
+    updateCounter();
+    statusEl.classList.add('hidden');
+
+    var b = bridge();
+    if (b && typeof b.onGlobeReady === 'function') {
+      try { b.onGlobeReady(catalogJson()); } catch (e) { console.warn('bridge ready', e); }
+    }
+  }
+
+  // ------------------------------------------------- API chiamata da Kotlin
+  // (evaluateJavascript). Tutte idempotenti e sicure da chiamare più volte.
+  window.BeenThere = {
+    ready: function () { return !!world; },
+    // sostituisce integralmente lo stato: la sorgente di verità è DataStore
+    setVisited: function (codes) {
+      visited = new Set((codes || []).filter(function (k) { return !!byKey[k]; }));
+      repaint(); updateCounter(); refreshRowStates();
+    },
+    setCountryVisited: function (code, isVisited) {
+      if (!byKey[code]) return false;
+      if (isVisited) visited.add(code); else visited.delete(code);
+      repaint(); updateCounter(); refreshRowStates();
+      return true;
+    },
+    getVisited: function () { return JSON.stringify(Array.from(visited)); },
+    focusCountry: function (code, ms) { return flyTo(code, ms); },
+    // per la ricerca lato Compose: JSON [{code,name}]
+    search: function (q, limit) {
+      return JSON.stringify(searchCountries(q, limit || 12).map(function (e) {
+        return { code: e.key, name: e.label };
+      }));
+    },
+    // Stesso payload di onGlobeReady, se Kotlin dovesse richiederlo.
+    catalog: function () { return catalogJson(); },
+    countryCount: function () { return features.length; },
+    setChromeVisible: function (v) { $('ui').hidden = !v; }
+  };
+
+  // ------------------------------------------------------------ caricamento
+  if (typeof Globe !== 'function') {
+    fail('globe.gl non caricato.',
+         'Manca <code>globe.gl.min.js</code> accanto a <code>index.html</code>.');
+    return;
+  }
+  fetch('countries.geojson')
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(initGlobe)
+    .catch(function (err) {
+      fail('Impossibile caricare countries.geojson &mdash; ' + err.message,
+           'Se stai aprendo il file con <code>file://</code> il browser blocca la fetch.<br>' +
+           'Avvia un server nella cartella assets:<br><code>python -m http.server 8000</code><br>' +
+           'e apri <code>http://localhost:8000/index.html</code>.');
+    });
+})();
+</script>
+</body>
+</html>

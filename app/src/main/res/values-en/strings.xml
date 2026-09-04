@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="counter">%1$d / %2$d countries</string>
+    <string name="counter_loading">Loading…</string>
+    <string name="search_placeholder">Search a country…</string>
+    <string name="search_placeholder_loading">Waiting for the globe…</string>
+    <string name="search_clear">Clear search</string>
+    <string name="search_no_results">No country found.</string>
+
+    <string name="visited_title">Visited countries</string>
+    <string name="visited_empty">Nothing yet. Tap a country on the globe, or search it and use the dot on the right.</string>
+    <string name="mark_visited">Mark as visited</string>
+    <string name="unmark_visited">Unmark as visited</string>
+
+</resources>

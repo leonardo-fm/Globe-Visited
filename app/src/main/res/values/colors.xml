@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palette della specifica: unica fonte per XML e Compose. -->
+    <color name="ocean">#1B4B8F</color>
+    <color name="land">#8A8A8A</color>
+    <color name="visited">#FF8C1A</color>
+    <color name="border">#33333A</color>
+    <color name="background">#05070F</color>
+</resources>

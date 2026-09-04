@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Been There</string>
+
+    <string name="counter">%1$d / %2$d paesi</string>
+    <string name="counter_loading">Caricamento…</string>
+    <string name="search_placeholder">Cerca un paese…</string>
+    <string name="search_placeholder_loading">Attendi il globo…</string>
+    <string name="search_clear">Cancella la ricerca</string>
+    <string name="search_no_results">Nessun paese trovato.</string>
+
+    <string name="visited_title">Paesi visitati</string>
+    <string name="visited_empty">Nessun paese ancora. Tocca uno stato sul globo, oppure cercalo e usa il pallino a destra.</string>
+    <string name="mark_visited">Segna come visitato</string>
+    <string name="unmark_visited">Togli dai visitati</string>
+
+</resources>

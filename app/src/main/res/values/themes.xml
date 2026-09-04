@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Tema di piattaforma: l'app e' interamente Compose, non serve AppCompat.
+      Le barre di sistema le rende trasparenti enableEdgeToEdge() in MainActivity.
+      windowBackground scuro evita il flash bianco all'avvio, prima che la
+      WebView abbia disegnato il primo frame.
+    -->
+    <style name="Theme.BeenThere" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:colorBackground">@color/background</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+</resources>
