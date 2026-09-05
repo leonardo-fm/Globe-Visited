@@ -9,6 +9,7 @@
 .externalNativeBuild
 .cxx
 
-# Nota: globe.gl.min.js e countries.geojson NON sono ignorati di proposito.
+# Nota: globe.gl.min.js, countries.geojson e TwemojiCountryFlags.woff2 NON sono
+# ignorati di proposito.
 # Senza di loro l'app non funziona e non c'e' rete da cui prenderli a runtime:
 # vanno versionati perche' un clone pulito compili e giri.

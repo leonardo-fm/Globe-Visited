@@ -55,6 +55,23 @@
   .row.on .tg { border-color: var(--visited); }
   .empty { padding: 12px; font-size: 13px; color: #7b7b88; }
 
+  /* Windows non ha i glifi delle bandiere: Microsoft li ha esclusi apposta da
+     Segoe UI Emoji, quindi Chrome su Windows non trova la coppia di indicatori
+     regionali e disegna le due lettere separate. Questo font contiene SOLO le
+     bandiere (78 KB) e, messo per primo nella catena di .flag, le risolve su
+     ogni piattaforma. unicode-range lo limita agli indicatori regionali: non
+     viene nemmeno scaricato finche' non si apre un popup con bandiera.
+     WebViewAssetLoader puo' servirlo con un MIME type generico (su Android 8
+     .woff2 non e' nella tabella di sistema): non e' un problema, i font non
+     sono soggetti al controllo del MIME type, il formato viene riconosciuto
+     dai byte. */
+  @font-face {
+    font-family: "Twemoji Country Flags";
+    src: url("TwemojiCountryFlags.woff2") format("woff2");
+    font-display: swap;
+    unicode-range: U+1F1E6-1F1FF;
+  }
+
   /* --- popup del paese selezionato ---------------------------------------
      Vive nel layer htmlElements di globe.gl (un CSS2DRenderer): la posizione
      la ricalcola la libreria a ogni frame, quindi la card resta incollata al
@@ -78,13 +95,13 @@
                padding: 10px 12px 11px; box-shadow: 0 12px 34px rgba(0,0,0,.55);
                backdrop-filter: blur(6px); }
   .pin .hd { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
-  /* Le bandiere sono emoji di sistema: nessun asset, nessuna rete. Su Android
-     ci sono; dove il font non le ha (Chrome su Windows) resta visibile la
-     coppia di lettere ISO, che dentro questa targhetta si legge lo stesso. */
+  /* Le bandiere sono emoji costruite dall'ISO_A2. Il font imbustato viene per
+     primo, poi le emoji di sistema (su Android le bandiere ci sono gia'). */
   .pin .flag { flex: none; width: 30px; height: 22px; border-radius: 4px; overflow: hidden;
                border: 1px solid #2b2b36; background: #12121a;
                display: grid; place-items: center;
-               font-family: "Noto Color Emoji", "Segoe UI Emoji", "Apple Color Emoji", system-ui, sans-serif;
+               font-family: "Twemoji Country Flags", "Noto Color Emoji",
+                            "Segoe UI Emoji", "Apple Color Emoji", system-ui, sans-serif;
                font-size: 15px; line-height: 1; }
   .pin .nm { font-size: 14px; font-weight: 600; line-height: 1.25; }
 

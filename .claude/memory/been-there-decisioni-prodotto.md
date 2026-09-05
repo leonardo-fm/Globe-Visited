@@ -36,9 +36,11 @@ Decisioni aggiunte il 2026-09-05, dopo i primi giri dell'app sul telefono:
 - **Il popup sta nella WebView, non in Compose**: deve restare incollato al
   paese mentre la sfera ruota, e il layer `htmlElements` di globe.gl lo fa a
   ogni frame senza attraversare il ponte JS-Kotlin a 60 fps.
-- **Bandiere come emoji** costruite dall'ISO_A2, non SVG imbustati: zero asset e
-  zero rete. Compromesso accettato dall'utente: Chrome su Windows non ha le flag
-  emoji e nel prototipo browser mostra la coppia di lettere ISO.
+- **Bandiere come emoji** costruite dall'ISO_A2, non ~250 SVG imbustati. Windows
+  pero' non ha i glifi delle bandiere e il prototipo browser mostrava "IT" al
+  posto di 🇮🇹: l'utente ha visto il difetto e ha scelto di aggiungere agli asset
+  `TwemojiCountryFlags.woff2` (78 KB, MIT), font con le sole bandiere, primo
+  nella catena font-family. Non riproporre i set di SVG per paese.
 - **Il popup sparisce in dissolvenza** quando il paese passa dietro l'orizzonte
   del globo, invece di galleggiare sopra l'oceano.
 - **Ricerca e lista dei visitati aprono lo stesso popup** del tocco diretto:

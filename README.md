@@ -9,13 +9,18 @@ l'app **non dichiara il permesso INTERNET** e non fa una sola richiesta di rete.
 
 ## Gli asset del globo
 
-`app/src/main/assets/` contiene gia' i due file necessari, versionati nel repo
+`app/src/main/assets/` contiene gia' i tre file necessari, versionati nel repo
 perche' senza di loro l'app non funziona e non c'e' rete da cui prenderli a
 runtime:
 
 - `globe.gl.min.js` - build UMD standalone di globe.gl **2.46.2** (three incluso),
   1,8 MB, presa da `https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js`
 - `countries.geojson` - Natural Earth Admin 0 1:50m semplificato, 242 paesi, 193 KB
+- `TwemojiCountryFlags.woff2` - font con i soli glifi delle bandiere, 78 KB,
+  pacchetto MIT, glifi Twemoji (CC-BY 4.0). Vedi *Bandiere* piu' sotto.
+  ```
+  curl -o TwemojiCountryFlags.woff2 https://cdn.jsdelivr.net/npm/country-flag-emoji-polyfill@0.1.10/dist/TwemojiCountryFlags.woff2
+  ```
 
 Per rigenerare il GeoJSON da capo:
 
@@ -113,9 +118,16 @@ mette `ISO_A2 = "-99"` su 9 feature; per Francia, Norvegia, Kosovo e Taiwan il
 codice si recupera da `ADM0_A3` con una tabella esplicita, e restano senza
 bandiera solo le 5 entità che un codice ISO non ce l'hanno (Somaliland, Cipro
 del Nord, Siachen, Ashmore e Cartier, Indian Ocean Ter.), che mostrano il solo
-nome. Copertura: 237 paesi su 242. Nota per il prototipo browser: Chrome su
-Windows non ha le flag emoji e al loro posto disegna la coppia di lettere ISO —
-la targhetta è dimensionata perché anche così si legga. Su Android si vedono.
+nome. Copertura: 237 paesi su 242.
+
+Le emoji di sistema però non bastano: **Windows non ha i glifi delle bandiere**,
+Microsoft li ha esclusi apposta da Segoe UI Emoji, e Chrome su Windows non
+trovando la coppia di indicatori regionali disegna le due lettere separate —
+`🇮🇹` diventa `IT`. Per questo negli asset c'è `TwemojiCountryFlags.woff2`, un
+font che contiene **solo** le bandiere: dichiarato in `@font-face` e messo per
+primo nel `font-family` di `.flag`, le risolve su ogni piattaforma. Lo
+`unicode-range: U+1F1E6-1F1FF` lo limita agli indicatori regionali, quindi non
+viene nemmeno caricato finché non si apre un popup con bandiera.
 
 **Identificazione dei paesi.** In Natural Earth alcuni stati hanno
 `ISO_A3 = "-99"` (Kosovo, Cipro del Nord, Somaliland, e in certe release anche
