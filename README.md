@@ -118,10 +118,10 @@ condivisi: lungo una frontiera il contorno di A e quello di B sono geometrie
 **coincidenti**, e i muri laterali dei vicini — invisibili, perché
 `polygonSideColor` è trasparente, ma che scrivono comunque nel depth buffer —
 arrivano esattamente alla stessa quota. Il bianco vinceva il test di profondità
-a macchia di leopardo. Alzando il selezionato di 0,4 unità, 40 volte quel
+a macchia di leopardo. Alzando il selezionato di 0,2 unità, 20 volte quel
 margine, il suo contorno passa sopra muri e contorni di tutti i vicini: il
 conflitto sparisce invece di essere solo reso meno probabile. Il sollevamento è
-impercettibile perché le pareti laterali sono trasparenti.
+poco visibile perché le pareti laterali sono trasparenti.
 
 La card vive nel layer `htmlElements` di globe.gl, cioè in un `CSS2DRenderer`:
 la posizione la ricalcola la libreria a ogni frame, quindi resta incollata al
@@ -191,7 +191,6 @@ di `d3-geo/area.js`, cosi' non puo' divergere da quello che applica la libreria;
 si somma su tutti gli anelli del poligono e, se il totale e' negativo, si
 invertono tutti, preservando il verso relativo fra buchi ed esterno. Il file su
 disco resta RFC 7946: rigenerare il GeoJSON non riporta il bug.
-`polygonCapCurvatureResolution` resta al default di globe.gl.
 
 **Ricolore efficiente.** Un tocco riesegue solo gli accessor, mai la
 tassellatura. Nella `update` del layer poligoni di globe.gl 2.46.2 la geometria
@@ -203,6 +202,63 @@ diventa solo `group.scale = 1 + alt`. Il README diceva il contrario, che
 cambiare altitudine rigenerasse la geometria: valeva per una versione
 precedente, ed è la ragione per cui il paese selezionato ora può essere
 sollevato senza costo.
+
+**Tassellatura della calotta: i cunei blu dentro i paesi.** La calotta di un
+paese si costruisce triangolando con Delaunay i punti del contorno più un
+reticolo di Fibonacci di punti interni, e i triangoli che toccano il contorno
+vengono **scartati se il loro baricentro cade fuori dal poligono**. Vicino a una
+rientranza del confine capita che un triangolo che copre terra buona abbia il
+baricentro appena oltre il bordo: viene buttato, e al suo posto si vede la
+sfera. Non sono buchi nel GeoJSON — verificato con una griglia a 3 km su tutta
+l'Asia centrale: l'unica zona scoperta è il Caspio.
+
+Col default di globe.gl (`polygonCapCurvatureResolution` = 5 gradi) il pianeta
+intero riceve **444 punti interni**: la Russia 54, il Kazakistan una decina. Ma
+abbassare la risoluzione *uniformemente* non basta, perché il reticolo è
+uniforme e un paese piccolo continua a prendere le briciole: a 1 grado restano
+49 paesi interi con 8 punti o meno — Svizzera 3, Belgio 3, Israele 1, Libano 1,
+Kuwait 1.
+
+La densità del reticolo è esattamente **1/res² punti per grado quadrato** (i
+`(360/res)²/π` punti della sfera divisi per i suoi 41.253 gradi quadrati),
+quindi per garantire a un poligono di area A almeno N punti basta
+`res = sqrt(A/N)`. Da qui la risoluzione **per paese**:
+`clamp(sqrt(area/60), 0.25, 0.5)`, calcolata sul poligono più grande della
+feature e memorizzata su di essa.
+
+I due limiti sono misurati, non scelti a occhio:
+
+- `MAX = 0.5` tiene il cuneo peggiore sotto i ~55 km anche per la Russia;
+- `MIN = 0.25` protegge i micro-stati. Sotto la propria dimensione un poligono
+  salta il ramo Delaunay e usa **earcut**, che è esatto e non sbaglia mai:
+  scendere sotto 0.25 strappa Malta, Singapore e Andorra da quel ramo sicuro e
+  peggiora il totale.
+
+Paesi interi con ≤8 punti interni, al variare della regola: **49** con
+l'uniforme a 1 grado, **27** con l'uniforme a 0.5, **15** con questa regola,
+poi si risale a 24 col minimo a 0.15 e a 45 col minimo a 0.05. Costo: 103.735
+test punto-in-poligono all'avvio contro i 931 del default, una tantum. I 15 che
+restano sono territori minuscoli (Guam, Isola di Man, Åland, Fær Øer, Cipro,
+Lussemburgo, Brunei).
+
+Attenzione: questo, a differenza dell'altitudine, è un vero parametro della
+geometria. L'accessor viene rieseguito a ogni digest, quindi il valore è
+memoizzato sulla feature — se cambiasse, ritassellerebbe tutto.
+
+**Il Caspio è un buco, e non è un difetto.** A ovest del Kazakistan si vede una
+grossa macchia del colore dell'oceano: è il Mar Caspio, che Natural Earth
+esclude dai poligoni admin-0 trattandolo come mare, insieme al suo golfo di
+Kara-Bogaz-Gol. Ogni punto non coperto da un paese lascia vedere la sfera, che è
+blu. Verificato che non c'entrano né la semplificazione né le fessure fra
+confini: sul `ne_50m` originale non semplificato i punti scoperti della regione
+sono gli stessi (691 contro 683, differenza tutta sui bordi), e una griglia a
+0,05° sull'intero confine Kazakistan-Uzbekistan non trova **nessun** punto
+scoperto. La stessa convenzione produce un'incoerenza che salta all'occhio: il
+Lago d'Aral e il Balqaš stanno *dentro* i poligoni dei paesi e quindi si colorano
+come terra, il Caspio no. È una scelta di Natural Earth, non nostra; riempirlo
+vorrebbe dire tracciare linee mediane fra i cinque stati rivieraschi, cioè
+prendere posizione su una spartizione che ha richiesto una convenzione
+internazionale nel 2018.
 
 **Contatore.** Il denominatore è il numero di poligoni presenti nel dataset
 (~242), non 195: Natural Earth include territori non sovrani e non coincide con

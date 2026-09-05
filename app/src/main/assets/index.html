@@ -173,10 +173,51 @@
   // laterali dei vicini - invisibili ma che scrivono nel depth buffer -
   // arrivano esattamente alla stessa quota. Risultato: il bianco vinceva il
   // test di profondita' solo su alcuni segmenti, a caso.
-  // Alzando il selezionato di 0,4 unita' - 40 volte quel margine - il suo
+  // Alzando il selezionato di 0,2 unita' - 20 volte quel margine - il suo
   // contorno passa sopra i muri e i contorni di tutti i vicini, e il conflitto
-  // sparisce invece di essere solo reso meno probabile.
-  var SEL_LIFT = 0.004;
+  // sparisce invece di essere solo reso meno probabile. Scendere ancora si puo'
+  // (il margine da battere e' 0,01 unita', cioe' SEL_LIFT = 0.0001), ma sotto
+  // qualche decimo si torna nel campo dove l'arrotondamento del depth buffer
+  // decide da solo, e il difetto riapparirebbe a macchie.
+  var SEL_LIFT = 0.002;
+
+  // TASSELLATURA DELLA CALOTTA.
+  // three-conic-polygon-geometry costruisce la calotta triangolando con
+  // Delaunay il contorno piu' un reticolo di Fibonacci di punti interni, e
+  // SCARTA i triangoli che toccano il contorno se il loro baricentro cade fuori
+  // dal poligono. Vicino a una rientranza del confine capita che un triangolo
+  // che copre terra buona abbia il baricentro appena oltre il bordo: viene
+  // buttato, e al suo posto si vede la sfera, cioe' un cuneo blu dentro il
+  // paese. Non sono buchi nel GeoJSON: la copertura e' stata verificata a 3 km
+  // e l'unica zona scoperta della regione e' il Caspio.
+  //
+  // Col default di globe.gl (5 gradi) il pianeta intero riceve 444 punti
+  // interni: la Russia 54, il Kazakistan una decina. Ma abbassare la
+  // risoluzione globale non basta, perche' il reticolo e' uniforme e un paese
+  // piccolo continua a prendere le briciole: a 1 grado restano 49 paesi interi
+  // con 8 punti o meno (Svizzera 3, Belgio 3, Israele 1, Libano 1, Kuwait 1).
+  //
+  // Il reticolo ha densita' esattamente 1/res^2 punti per grado quadrato (i
+  // (360/res)^2/pi punti della sfera divisi per i suoi 41.253 gradi quadrati),
+  // quindi per garantire a un poligono di area A almeno N punti interni basta
+  // res = sqrt(A/N). Da qui la risoluzione per paese qui sotto.
+  //
+  // I due limiti non sono arbitrari, sono misurati:
+  //  - MAX 0.5 tiene il cuneo peggiore sotto i ~55 km anche per la Russia;
+  //  - MIN 0.25 protegge i micro-stati. Sotto la sua dimensione un poligono
+  //    passa a earcut, che e' una triangolazione esatta e non sbaglia mai:
+  //    scendendo sotto 0.25 si strappano Malta, Singapore, Andorra e compagnia
+  //    da quel ramo sicuro e si peggiora. Contati i paesi interi con <=8 punti:
+  //    49 con l'uniforme a 1 grado, 27 con l'uniforme a 0.5, 15 con questa
+  //    regola, poi si risale a 24 col minimo a 0.15 e a 45 col minimo a 0.05.
+  // Costo: 103.735 test punto-in-poligono all'avvio contro i 931 del default,
+  // una tantum. E' un vero parametro della geometria - a differenza
+  // dell'altitudine - quindi si calcola una volta sola e si memorizza sulla
+  // feature: cambiarlo a runtime ritassellerebbe tutto.
+  var CAP_TARGET_PTS = 60;
+  var CAP_RES_MIN = 0.25;
+  var CAP_RES_MAX = 0.5;
+  var DEG2_PER_SR = Math.pow(180 / Math.PI, 2);
 
   // Su Android la chrome HTML resta spenta: contatore, ricerca e lista li fa
   // Compose parlando con window.BeenThere.*, e la verità sta in DataStore.
@@ -375,6 +416,35 @@
       return n;
     }
     return 0;
+  }
+
+  // Area di un poligono in gradi quadrati, dalla stessa somma sferica usata per
+  // il verso degli anelli: sommaAnelli * 2 sono steradianti, il fattore li
+  // porta in gradi quadrati.
+  function polygonAreaDeg2(rings) {
+    var sr = 0;
+    for (var i = 0; i < rings.length; i++) sr += sphericalRingSum(rings[i]);
+    return Math.abs(sr * 2) * DEG2_PER_SR;
+  }
+
+  // Risoluzione di tassellatura di questa feature (vedi il blocco su
+  // CAP_TARGET_PTS). Si guarda il poligono piu' grande: e' quello che detta
+  // quanto grossi vengono i triangoli, e quindi quanto puo' essere grosso un
+  // cuneo perso. Memorizzata sulla feature perche' l'accessor viene rieseguito
+  // a ogni digest, e un valore che cambia farebbe ritassellare tutto.
+  function capResolution(feat) {
+    if (feat.__capRes) return feat.__capRes;
+    var geom = feat.geometry;
+    var polys = geom.type === 'Polygon' ? [geom.coordinates]
+              : geom.type === 'MultiPolygon' ? geom.coordinates : [];
+    var biggest = 0;
+    for (var i = 0; i < polys.length; i++) {
+      var a = polygonAreaDeg2(polys[i]);
+      if (a > biggest) biggest = a;
+    }
+    var res = Math.sqrt(biggest / CAP_TARGET_PTS);
+    feat.__capRes = Math.min(CAP_RES_MAX, Math.max(CAP_RES_MIN, res));
+    return feat.__capRes;
   }
 
   function outerRings(geom) {
@@ -754,6 +824,8 @@
       .atmosphereAltitude(0.15)
       .polygonsData(features)
       .polygonAltitude(function (f) { return polyAltitude(f); })
+      // per paese, non uniforme: vedi il blocco su CAP_TARGET_PTS
+      .polygonCapCurvatureResolution(function (f) { return capResolution(f); })
       .polygonCapColor(function (f) { return capColor(f); })
       .polygonSideColor(function () { return 'rgba(0,0,0,0)'; })
       .polygonStrokeColor(function (f) { return strokeColor(f); })
