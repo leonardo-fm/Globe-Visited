@@ -128,7 +128,7 @@ Il manifest resta senza `<uses-permission>`.
 l'altitudine, quindi un toggle riesegue soltanto l'accessor del colore. Vale sia per il
 tocco sul globo sia per il toggle che arriva da Kotlin.
 
-**Chiave paese.** `ISO_A3` → `ISO_A3_EH` → `ADM0_A3` → `SOV_A3` → nome normalizzato,
+**Chiave paese.** `ISO_A3` → `ADM0_A3` → nome normalizzato,
 funzione unica lato JS. I codici salvati in DataStore vengono da lì, quindi restano
 stabili finché non cambi dataset. Il warning in console sulle chiavi duplicate resta
 attivo come rete di sicurezza.

@@ -6,8 +6,8 @@ import java.util.Locale
 
 /**
  * Un paese del dataset. Il [code] arriva dal JavaScript, che lo calcola con la
- * funzione unica di identificazione (ISO_A3 -> ISO_A3_EH -> ADM0_A3 -> SOV_A3 ->
- * nome normalizzato). E' anche la chiave salvata in DataStore.
+ * funzione unica di identificazione (ISO_A3 -> ADM0_A3 -> nome normalizzato).
+ * E' anche la chiave salvata in DataStore.
  */
 data class Country(
     val code: String,

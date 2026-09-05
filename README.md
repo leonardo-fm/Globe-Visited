@@ -7,38 +7,26 @@ l'app **non dichiara il permesso INTERNET** e non fa una sola richiesta di rete.
 - Globo reso in una WebView a schermo intero con [globe.gl](https://globe.gl) (three.js).
 - Persistenza in DataStore Preferences. La verità sta lato Kotlin, non nella WebView.
 
-## Prima della compilazione: i due asset
+## Gli asset del globo
 
-Non sono nel repository e vanno scaricati a mano in `app/src/main/assets/`.
+`app/src/main/assets/` contiene gia' i due file necessari, versionati nel repo
+perche' senza di loro l'app non funziona e non c'e' rete da cui prenderli a
+runtime:
 
-**1. globe.gl (build UMD standalone, three incluso)**
+- `globe.gl.min.js` - build UMD standalone di globe.gl **2.46.2** (three incluso),
+  1,8 MB, presa da `https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js`
+- `countries.geojson` - Natural Earth Admin 0 1:50m semplificato, 242 paesi, 193 KB
 
-```
-https://cdn.jsdelivr.net/npm/globe.gl/dist/globe.gl.min.js
-```
-
-Salvalo come `app/src/main/assets/globe.gl.min.js`. Guarda quale versione ti ha
-risolto jsDelivr (è scritta nel commento in testa al file) e riscarica con l'URL
-pinnato, per esempio `.../globe.gl@2.35.3/dist/globe.gl.min.js`.
-
-**2. Confini dei paesi (Natural Earth Admin 0, 1:50m)**
+Per rigenerare il GeoJSON da capo:
 
 ```
-https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson
+curl -O https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson
+
+npx mapshaper ne_50m_admin_0_countries.geojson -filter-fields ISO_A3,ADM0_A3,ISO_A2,NAME,NAME_LONG,NAME_IT,ADMIN -simplify visvalingam 8% keep-shapes -clean -o format=geojson precision=0.01 countries.geojson
 ```
 
-Semplificalo con [mapshaper](https://github.com/mbloch/mapshaper):
-
-```
-npm install -g mapshaper
-
-mapshaper ne_50m_admin_0_countries.geojson -filter-fields ISO_A3,ISO_A3_EH,ADM0_A3,SOV_A3,ISO_A2,NAME,NAME_LONG,NAME_IT,ADMIN -simplify visvalingam 8% keep-shapes -clean -o format=geojson precision=0.01 countries.geojson
-```
-
-Il risultato va in `app/src/main/assets/countries.geojson`, peso atteso 700 KB – 1 MB.
-
-Perché il 50m e non il 110m della prima bozza: a 1:110m Malta, Singapore e
-Maldive **non esistono come poligoni**, quindi non sarebbero né cliccabili né
+Perche' il 50m e non il 110m della prima bozza: a 1:110m Malta, Singapore e
+Maldive **non esistono come poligoni**, quindi non sarebbero ne' cliccabili ne'
 cercabili. Restano fuori anche dal 50m soltanto Vaticano, Monaco, San Marino,
 Liechtenstein, Andorra e alcune isole del Pacifico, presenti solo a 1:10m.
 
@@ -46,22 +34,24 @@ Liechtenstein, Andorra e alcune isole del Pacifico, presenti solo a 1:10m.
 `-clean` ripara le auto-intersezioni che la semplificazione introduce,
 `precision=0.01` (~1 km) taglia i decimali inutili.
 
+I campi tenuti sono il minimo che servono al globo e alla ricerca. **Non
+aggiungere `ISO_A3_EH` o `SOV_A3`**: per le dipendenze contengono il codice
+dello stato sovrano, e usarli come chiave fa colorare Ashmore e Indian Ocean
+Ter. insieme all'Australia.
+
 ## Compilazione
-
-Il `gradle-wrapper.jar` non è versionato: generalo una volta con
-
-```
-gradle wrapper
-```
-
-oppure apri semplicemente il progetto in Android Studio, che lo crea da solo.
-Poi:
 
 ```
 ./gradlew assembleDebug
 ```
 
-Requisiti: JDK 17+, compileSdk 35, minSdk 26.
+L'APK esce in `app/build/outputs/apk/debug/app-debug.apk`.
+
+Requisiti: JDK 17+ (testato con 21), compileSdk 35, minSdk 26. Il file
+`local.properties` con `sdk.dir` non e' versionato: lo crea Android Studio, o lo
+scrivi a mano con gli slash in avanti (`sdk.dir=C:/percorso/Android/Sdk` -
+attenzione, in un file .properties i backslash singoli sono escape e il percorso
+verrebbe letto storto).
 
 ## Provare il globo nel browser, senza Android
 
@@ -101,7 +91,7 @@ i toggle nati dalla UI nativa vengono persistiti e poi spinti al globo con
 **Identificazione dei paesi.** In Natural Earth alcuni stati hanno
 `ISO_A3 = "-99"` (Kosovo, Cipro del Nord, Somaliland, e in certe release anche
 Francia e Norvegia). Una funzione unica in `index.html` risolve la chiave con
-`ISO_A3 → ISO_A3_EH → ADM0_A3 → SOV_A3 → nome normalizzato`, ed è la stessa che
+`ISO_A3 → ADM0_A3 → nome normalizzato`, ed è la stessa che
 produce i codici salvati in DataStore. All'avvio la console logga un warning se
 due feature collidono sulla stessa chiave.
 

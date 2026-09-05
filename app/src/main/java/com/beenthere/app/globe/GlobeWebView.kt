@@ -88,7 +88,6 @@ fun GlobeWebView(
                     javaScriptEnabled = true
                     // Nulla di tutto questo serve: il globo e' solo WebGL su asset locali.
                     domStorageEnabled = false
-                    databaseEnabled = false
                     allowFileAccess = false
                     allowContentAccess = false
                     builtInZoomControls = false
