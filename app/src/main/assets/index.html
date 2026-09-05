@@ -195,6 +195,68 @@
   }
 
   // -------------------------------------------------------------- geometria
+
+  // VERSO DEGLI ANELLI. three-globe costruisce le calotte con
+  // three-conic-polygon-geometry, che si appoggia a d3-geo. d3-geo usa la
+  // convenzione sferica OPPOSTA a RFC 7946: l'anello esterno va in senso
+  // ORARIO (area sferica con segno positiva), i buchi in senso antiorario.
+  // Il nostro GeoJSON e' RFC 7946 (esterni antiorari): tutti e 470 i poligoni
+  // hanno area sferica negativa, quindi d3 li legge come il COMPLEMENTO del
+  // paese. Conseguenze viste a schermo:
+  //   - d3.geoBounds restituisce l'intera sfera, la libreria crede che il
+  //     poligono contenga i poli e passa al ramo di triangolazione sferica;
+  //   - li' il punto-dentro-poligono e' geoContains, che sul complemento e'
+  //     vero FUORI dai confini: la calotta colorata copre tutto tranne il
+  //     paese, e il raycast del click finisce sulla mesh di un altro paese
+  //     (di qui il "seleziona quello accanto").
+  // Si riavvolge una volta sola, in place, prima di passare i dati al globo.
+  var RING_RAD = Math.PI / 180, RING_QUARTER_PI = Math.PI / 4;
+
+  // Area sferica con segno di un anello: stessa formula di d3-geo/area.js,
+  // cosi' il criterio qui e' identico a quello che applichera' la libreria.
+  // Il modulo sull'indice richiude l'anello anche se il GeoJSON non lo fosse
+  // (su un anello gia' chiuso l'ultimo segmento e' nullo e non contribuisce).
+  function sphericalRingSum(ring) {
+    var sum = 0, lambda0 = 0, cosPhi0 = 0, sinPhi0 = 0, n = ring.length;
+    for (var i = 0; i <= n; i++) {
+      var pt = ring[i % n];
+      var lambda = pt[0] * RING_RAD, phi = pt[1] * RING_RAD / 2 + RING_QUARTER_PI;
+      var cosPhi = Math.cos(phi), sinPhi = Math.sin(phi);
+      if (i > 0) {
+        var d = lambda - lambda0, sg = d >= 0 ? 1 : -1, ad = sg * d, k = sinPhi0 * sinPhi;
+        sum += Math.atan2(k * sg * Math.sin(ad), cosPhi0 * cosPhi + k * Math.cos(ad));
+      }
+      lambda0 = lambda; cosPhi0 = cosPhi; sinPhi0 = sinPhi;
+    }
+    return sum;
+  }
+
+  // Si somma su tutti gli anelli del poligono (esterno + buchi), come fa d3
+  // tra polygonStart e polygonEnd, e se il totale e' negativo si invertono
+  // TUTTI gli anelli: il verso relativo buchi/esterno resta corretto.
+  function rewindPolygon(rings) {
+    var sum = 0;
+    for (var i = 0; i < rings.length; i++) sum += sphericalRingSum(rings[i]);
+    if (sum < 0) {
+      for (var j = 0; j < rings.length; j++) rings[j].reverse();
+      return true;
+    }
+    return false;
+  }
+  // Ogni poligono di un MultiPolygon e' una calotta a se': va valutato da solo.
+  function rewindGeometry(geom) {
+    if (!geom) return 0;
+    if (geom.type === 'Polygon') return rewindPolygon(geom.coordinates) ? 1 : 0;
+    if (geom.type === 'MultiPolygon') {
+      var n = 0;
+      for (var i = 0; i < geom.coordinates.length; i++) {
+        if (rewindPolygon(geom.coordinates[i])) n++;
+      }
+      return n;
+    }
+    return 0;
+  }
+
   function outerRings(geom) {
     if (!geom) return [];
     if (geom.type === 'Polygon') return [geom.coordinates[0]];
@@ -413,6 +475,12 @@
   function initGlobe(geojson) {
     features = (geojson.features || []).filter(function (f) { return f.geometry; });
     if (!features.length) { fail('Il GeoJSON non contiene feature.'); return; }
+
+    // Prima di ogni altra cosa: verso degli anelli nella convenzione di d3-geo
+    // (vedi il commento su rewindPolygon). Va fatto prima di polygonsData().
+    var rewound = 0;
+    features.forEach(function (f) { rewound += rewindGeometry(f.geometry); });
+    if (rewound) console.log('[BeenThere] poligoni riavvolti per d3-geo:', rewound);
 
     var seen = Object.create(null), collisions = [];
     features.forEach(function (f) {

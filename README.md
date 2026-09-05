@@ -95,6 +95,16 @@ Francia e Norvegia). Una funzione unica in `index.html` risolve la chiave con
 produce i codici salvati in DataStore. All'avvio la console logga un warning se
 due feature collidono sulla stessa chiave.
 
+**Tassellatura del cap.** `polygonCapCurvatureResolution` e' impostato a 0.5 gradi
+contro il default 5 di globe.gl. Con il default le celle di tassellatura sono da
+~550 km, piu' larghe di mezza Europa: il riempimento di un paese sborda oltre il
+confine con lunghi triangoli verso l'esterno. Il difetto e' invisibile finche'
+tutti i paesi sono dello stesso grigio, perche' i confini a schermo sono le linee
+di contorno, disegnate a parte e sempre corrette. Si manifesta in due modi: un
+paese appena colorato mostra un'aureola di spuntoni arancioni sopra i vicini, e
+il tocco seleziona il paese confinante invece di quello sotto il dito, perche' il
+raycast incontra per primo quella geometria sbordante.
+
 **Ricolore efficiente.** L'altitudine dei poligoni è una costante e le
 transizioni sono a zero: three-globe rigenera la geometria solo quando cambia
 l'altitudine, quindi un tocco riesegue soltanto l'accessor del colore.
