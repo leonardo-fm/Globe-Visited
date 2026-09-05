@@ -112,6 +112,19 @@ card se li riaccende per sé. `htmlElementVisibilityModifier` dice quando il
 punto è passato dietro l'orizzonte del globo, e la card svanisce in dissolvenza
 restando selezionata.
 
+**Il tocco sulla card non deve far partire il raycast**, e `pointer-events: auto`
+da solo non basta: globe.gl ascolta il `pointerup` sul contenitore della scena e
+lo fa **in fase di cattura**, mentre il layer CSS2D — quindi la card — vive
+dentro quel contenitore. Un listener in cattura su un antenato scatta prima del
+bersaglio, perciò nessuno `stopPropagation` lanciato dalla card arriva in tempo.
+Senza contromisure premere l'interruttore selezionava anche il paese sotto la
+card, e se sotto c'era oceano il popup si chiudeva da solo. La soluzione non è
+intercettare l'evento ma scartarlo: le callback di globe.gl ricevono l'evento
+DOM originale (`onPolygonClick(poligono, evento, coords)`,
+`onGlobeClick(coords, evento)`), e `fromPopup()` guarda `event.target` per
+sapere dove il dito è atterrato davvero. Stelo e pallino restano a
+`pointer-events: none`, così continuano a lasciar passare il tocco al paese.
+
 **Bandiere.** Sono emoji costruite dall'`ISO_A2` con due indicatori regionali
 (`IT` → 🇮🇹): zero asset, zero rete, le disegna il font di sistema. Natural Earth
 mette `ISO_A2 = "-99"` su 9 feature; per Francia, Norvegia, Kosovo e Taiwan il

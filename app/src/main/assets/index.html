@@ -501,6 +501,28 @@
     if (world) world.htmlElementsData([]);
   }
 
+  /**
+   * Il tocco e' atterrato dentro il popup?
+   *
+   * Serve perche' `pointer-events: auto` sulla card NON basta a fermare il
+   * raycast. globe.gl ascolta il pointerup sul contenitore della scena e lo fa
+   * **in fase di cattura**; il layer CSS2D, e quindi la card, vive dentro
+   * quello stesso contenitore. Un listener in cattura su un antenato scatta
+   * prima del bersaglio, percio' nessuno stopPropagation lanciato dalla card
+   * puo' arrivare in tempo: l'evento e' gia' stato consumato. Il risultato era
+   * che premere l'interruttore selezionava anche il paese che sta sotto la
+   * card, e se sotto c'era oceano il popup si chiudeva da solo.
+   *
+   * Non si intercetta l'evento, lo si scarta qui: le callback di globe.gl
+   * ricevono l'evento DOM originale, e target dice dove il dito e' davvero
+   * atterrato. Solo .card riabilita i pointer events, quindi stelo e pallino
+   * continuano a lasciar passare il tocco al paese sotto.
+   */
+  function fromPopup(ev) {
+    var el = ev && ev.target;
+    return !!(el && typeof el.closest === 'function' && el.closest('.pin'));
+  }
+
   // -------------------------------------------------------- ponte con Kotlin
   function bridge() {
     return (typeof window.AndroidBridge !== 'undefined') ? window.AndroidBridge : null;
@@ -697,15 +719,15 @@
       .polygonsTransitionDuration(0)             // niente tween -> niente geometrie rigenerate
       // Il tocco non segna piu' il paese: lo seleziona e apre il popup, dove
       // il toggle e' esplicito. Toccare di nuovo lo stesso paese chiude.
-      .onPolygonClick(function (f) {
-        if (!f) return;
+      .onPolygonClick(function (f, ev) {
+        if (!f || fromPopup(ev)) return;
         var key = countryKey(f);
         if (key === selected) clearSelection(); else selectCountry(key);
       })
       .onPolygonHover(function (f) { document.body.style.cursor = f ? 'pointer' : 'default'; })
       // Un tocco sull'oceano chiude: i poligoni stanno sopra la sfera, quindi
       // questo scatta solo quando il raycast non ha incontrato nessun paese.
-      .onGlobeClick(function () { clearSelection(); })
+      .onGlobeClick(function (coords, ev) { if (!fromPopup(ev)) clearSelection(); })
       // Layer htmlElements: la card del popup. La posizione la aggiorna
       // globe.gl a ogni frame, e il modifier di visibilita' la fa sparire in
       // dissolvenza quando il paese passa dietro l'orizzonte del globo.
