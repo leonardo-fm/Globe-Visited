@@ -8,7 +8,7 @@
     <string name="search_no_results">No country found.</string>
 
     <string name="visited_title">Visited countries</string>
-    <string name="visited_empty">Nothing yet. Tap a country on the globe, or search it and use the dot on the right.</string>
+    <string name="visited_empty">Nothing yet. Tap a country on the globe and turn on Visited in the popup, or search it and use the dot on the right.</string>
     <string name="mark_visited">Mark as visited</string>
     <string name="unmark_visited">Unmark as visited</string>
 

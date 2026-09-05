@@ -45,8 +45,14 @@ class GlobeController {
         eval("window.BeenThere && BeenThere.setCountryVisited(${JSONObject.quote(code)}, $isVisited)")
     }
 
+    /** Vola sul paese e ne apre il popup, come farebbe un tocco sul globo. */
     fun focusCountry(code: String) {
         eval("window.BeenThere && BeenThere.focusCountry(${JSONObject.quote(code)})")
+    }
+
+    /** Lingua di nome del paese e pulsante dentro il popup disegnato dalla pagina. */
+    fun setLanguage(tag: String) {
+        eval("window.BeenThere && BeenThere.setLanguage(${JSONObject.quote(tag)})")
     }
 
     private fun eval(script: String) {

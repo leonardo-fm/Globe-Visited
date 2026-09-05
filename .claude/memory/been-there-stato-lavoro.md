@@ -1,25 +1,27 @@
 ---
 name: been-there-stato-lavoro
-description: "Punto in cui si e' fermato il lavoro su Been There al 2026-09-04 e cosa manca per compilare"
+description: "Punto in cui si e' fermato il lavoro su Been There al 2026-09-05: l'app gira sul telefono, cosa e' stato corretto dopo il primo build"
 metadata: 
   node_type: memory
   type: project
   originSessionId: 41cb3d5f-b93c-4509-833e-f6ccfe5d5cb4
-  modified: 2026-09-04T19:07:57.688Z
+  modified: 2026-09-05T00:00:00.000Z
 ---
 
-Al 2026-09-04 il progetto Android "Been There" (globo 3D dei paesi visitati) e'
-scritto per intero ma **non e' mai stato compilato**: fase 1 (index.html
-autonomo) e fase 2 (guscio Kotlin/Compose) sono entrambe consegnate.
+Al 2026-09-05 "Been There" **compila e gira sul telefono**: l'utente ha
+generato il wrapper Gradle, scaricato gli asset e fatto il primo
+`assembleDebug` da solo. I tre punti aperti del 2026-09-04 sono chiusi.
 
-Mancano tre cose, tutte a carico dell'utente:
-1. scaricare `globe.gl.min.js` e `countries.geojson` in `app/src/main/assets/`
-   (URL e comando mapshaper stanno nel README del repo);
-2. generare `gradle-wrapper.jar` con `gradle wrapper` o aprendo il progetto in
-   Android Studio — e' un binario che non posso produrre io;
-3. il primo `assembleDebug`, che e' anche la prima vera verifica del codice.
+Da allora il lavoro e' su bug e rifiniture trovati usando l'app:
 
-L'utente non ha mai confermato di aver provato `index.html` nel browser: la
-fase 2 e' stata costruita su quel presupposto.
+- **Verso degli anelli del GeoJSON** (commit `a10e0fd`, "fixed bug state
+  orange"): il dataset e' RFC 7946 mentre d3-geo vuole la convenzione opposta,
+  quindi ogni paese veniva reso come il proprio complemento - colore fuori dai
+  confini e tocco che selezionava il vicino. `index.html` ora riavvolge i
+  poligoni all'avvio. Causa e catena completa stanno nel README.
+- **Popup del paese selezionato**: tocco = selezione, non piu' toggle. Vedi
+  [[been-there-decisioni-prodotto]] per le scelte concordate.
 
-Vedi [[been-there-decisioni-prodotto]] e [[ambiente-senza-toolchain-android]].
+L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.
+La verifica possibile da questa macchina resta quella descritta in
+[[ambiente-senza-toolchain-android]].

@@ -53,6 +53,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 is GlobeCommand.SetAll -> controller.setVisited(command.codes)
                 is GlobeCommand.SetOne -> controller.setCountryVisited(command.code, command.isVisited)
                 is GlobeCommand.Focus -> controller.focusCountry(command.code)
+                is GlobeCommand.SetLanguage -> controller.setLanguage(command.language.tag)
             }
         }
     }

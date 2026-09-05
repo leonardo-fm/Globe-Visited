@@ -69,7 +69,7 @@ e apri `http://localhost:8000/index.html`.
 ## Come sono organizzate le cose
 
 ```
-app/src/main/assets/index.html          il globo: rendering, tocchi, colori
+app/src/main/assets/index.html          il globo: rendering, selezione, popup, colori
 app/src/main/java/com/beenthere/app/
   MainActivity.kt                       edge-to-edge, tema
   MainViewModel.kt                      stato unico + comandi verso il globo
@@ -81,12 +81,41 @@ app/src/main/java/com/beenthere/app/
 ```
 
 **Il flusso dei dati.** A globo pronto il JavaScript passa a Kotlin l'intero
-catalogo dei paesi in una sola chiamata; da lì la ricerca è tutta nativa. I
-tocchi sul globo colorano subito lato JS e vengono solo persistiti da Kotlin;
-i toggle nati dalla UI nativa vengono persistiti e poi spinti al globo con
-`evaluateJavascript`. Non c'è mai un giro di ritorno che ridisegni due volte.
+catalogo dei paesi in una sola chiamata; da lì la ricerca è tutta nativa. Un
+tocco sul globo **non segna niente**: apre il popup del paese, e solo
+l'interruttore dentro il popup marca il visitato, colorando subito lato JS e
+facendolo persistere da Kotlin. I toggle nati dalla UI nativa vengono persistiti
+e poi spinti al globo con `evaluateJavascript`. Non c'è mai un giro di ritorno
+che ridisegni due volte.
 
 ## Punti che è utile conoscere
+
+**Popup del paese.** Toccare un paese lo seleziona e apre una card ancorata al
+suo centroide, con bandiera, nome e un interruttore *Visitato*: la selezione e
+la marcatura sono due gesti distinti, e un tocco distratto sul globo non sporca
+più i dati. Toccare di nuovo lo stesso paese chiude, toccare l'oceano chiude,
+scegliere un paese dalla ricerca o dalla lista dei visitati vola e apre la
+stessa card.
+
+La card vive nel layer `htmlElements` di globe.gl, cioè in un `CSS2DRenderer`:
+la posizione la ricalcola la libreria a ogni frame, quindi resta incollata al
+paese mentre la sfera ruota senza una riga di codice di posizionamento e senza
+attraversare il ponte JS↔Kotlin a 60 fps. È anche il motivo per cui il popup sta
+nella WebView e non in Compose. Il contenitore di quel layer ha
+`pointer-events: none`, così il trascinamento del globo ci passa sotto: solo la
+card se li riaccende per sé. `htmlElementVisibilityModifier` dice quando il
+punto è passato dietro l'orizzonte del globo, e la card svanisce in dissolvenza
+restando selezionata.
+
+**Bandiere.** Sono emoji costruite dall'`ISO_A2` con due indicatori regionali
+(`IT` → 🇮🇹): zero asset, zero rete, le disegna il font di sistema. Natural Earth
+mette `ISO_A2 = "-99"` su 9 feature; per Francia, Norvegia, Kosovo e Taiwan il
+codice si recupera da `ADM0_A3` con una tabella esplicita, e restano senza
+bandiera solo le 5 entità che un codice ISO non ce l'hanno (Somaliland, Cipro
+del Nord, Siachen, Ashmore e Cartier, Indian Ocean Ter.), che mostrano il solo
+nome. Copertura: 237 paesi su 242. Nota per il prototipo browser: Chrome su
+Windows non ha le flag emoji e al loro posto disegna la coppia di lettere ISO —
+la targhetta è dimensionata perché anche così si legga. Su Android si vedono.
 
 **Identificazione dei paesi.** In Natural Earth alcuni stati hanno
 `ISO_A3 = "-99"` (Kosovo, Cipro del Nord, Somaliland, e in certe release anche
@@ -95,15 +124,28 @@ Francia e Norvegia). Una funzione unica in `index.html` risolve la chiave con
 produce i codici salvati in DataStore. All'avvio la console logga un warning se
 due feature collidono sulla stessa chiave.
 
-**Tassellatura del cap.** `polygonCapCurvatureResolution` e' impostato a 0.5 gradi
-contro il default 5 di globe.gl. Con il default le celle di tassellatura sono da
-~550 km, piu' larghe di mezza Europa: il riempimento di un paese sborda oltre il
-confine con lunghi triangoli verso l'esterno. Il difetto e' invisibile finche'
-tutti i paesi sono dello stesso grigio, perche' i confini a schermo sono le linee
-di contorno, disegnate a parte e sempre corrette. Si manifesta in due modi: un
-paese appena colorato mostra un'aureola di spuntoni arancioni sopra i vicini, e
-il tocco seleziona il paese confinante invece di quello sotto il dito, perche' il
-raycast incontra per primo quella geometria sbordante.
+**Verso degli anelli del GeoJSON.** All'avvio `index.html` riavvolge in place i
+poligoni prima di passarli al globo, e non e' un dettaglio cosmetico. three-globe
+costruisce le calotte con `three-conic-polygon-geometry`, che si appoggia a
+**d3-geo**, e d3-geo usa la convenzione sferica **opposta a RFC 7946**: anello
+esterno in senso *orario* (area sferica con segno positiva), buchi in senso
+antiorario. Il nostro dataset e' RFC 7946, quindi tutti e 470 i poligoni avevano
+area d3 negativa e d3 li leggeva come il **complemento** del paese. Da li':
+
+1. `d3.geoBounds` di un poligono con area negativa restituisce l'intera sfera;
+2. la libreria conclude che il poligono contiene i poli e abbandona il ramo di
+   triangolazione earcut (che al verso e' indifferente) per quello sferico;
+3. li' il test punto-dentro-poligono e' `geoContains`, che sul complemento e'
+   vero **fuori** dai confini.
+
+A schermo: la calotta colorata copriva tutto tranne il paese, e il tocco
+selezionava un altro paese perche' il raycast incontrava la mesh invertita di un
+vicino. Il criterio del riavvolgimento (`sphericalRingSum`) e' la stessa formula
+di `d3-geo/area.js`, cosi' non puo' divergere da quello che applica la libreria;
+si somma su tutti gli anelli del poligono e, se il totale e' negativo, si
+invertono tutti, preservando il verso relativo fra buchi ed esterno. Il file su
+disco resta RFC 7946: rigenerare il GeoJSON non riporta il bug.
+`polygonCapCurvatureResolution` resta al default di globe.gl.
 
 **Ricolore efficiente.** L'altitudine dei poligoni è una costante e le
 transizioni sono a zero: three-globe rigenera la geometria solo quando cambia
@@ -120,7 +162,11 @@ dito, il pallino a destra di ogni risultato è la via di selezione.
 **Lingua.** Selettore manuale IT/EN nella bottom sheet, salvato in DataStore.
 Non passa dal locale di sistema perché `LocaleManager` è API 33+ e qui minSdk è
 26: le traduzioni restano in `res/values` e `res/values-en`, lette da
-`appString()` con un `Resources` a locale sovrascritto.
+`appString()` con un `Resources` a locale sovrascritto. Da quando esiste il
+popup la lingua deve arrivare anche dentro la WebView, che disegna da sé nome e
+pulsante: `GlobeCommand.SetLanguage` la spinge con `BeenThere.setLanguage()`,
+all'avvio e a ogni cambio. Le poche stringhe della pagina stanno nell'oggetto
+`STR` di `index.html`; i nomi dei paesi passano da `NAME_IT` a `NAME`.
 
 **Rotazione.** L'activity dichiara `configChanges`, così ruotando il telefono la
 WebView non viene distrutta e il globo non si ricarica.

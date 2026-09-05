@@ -23,6 +23,12 @@ sealed interface GlobeCommand {
     data class SetAll(val codes: Set<String>) : GlobeCommand
     data class SetOne(val code: String, val isVisited: Boolean) : GlobeCommand
     data class Focus(val code: String) : GlobeCommand
+
+    /**
+     * La pagina disegna da se' il popup del paese selezionato, quindi anche lei
+     * ha bisogno di sapere in che lingua scrivere nome e pulsante.
+     */
+    data class SetLanguage(val language: AppLanguage) : GlobeCommand
 }
 
 data class UiState(
@@ -72,7 +78,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             // Si legge direttamente dal repository: uiState potrebbe non avere
             // ancora ricevuto la prima emissione di DataStore, e in quel caso si
-            // spingerebbe un insieme vuoto sul globo.
+            // spingerebbe un insieme vuoto (o la lingua di default) sul globo.
+            _commands.emit(GlobeCommand.SetLanguage(repository.language.first()))
             _commands.emit(GlobeCommand.SetAll(repository.visited.first()))
         }
     }
@@ -99,6 +106,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setLanguage(language: AppLanguage) {
-        viewModelScope.launch { repository.setLanguage(language) }
+        viewModelScope.launch {
+            repository.setLanguage(language)
+            _commands.emit(GlobeCommand.SetLanguage(language))
+        }
     }
 }

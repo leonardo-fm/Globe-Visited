@@ -1,5 +1,5 @@
-- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — tutto scritto, mai compilato: cosa manca per il primo build
-- [Decisioni di prodotto di Been There](been-there-decisioni-prodotto.md) — dataset 50m, contatore dinamico, WebViewAssetLoader, lingua manuale: concordate, non ridiscuterle
+- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — l'app gira sul telefono: cosa è stato corretto dopo il primo build
+- [Decisioni di prodotto di Been There](been-there-decisioni-prodotto.md) — dataset 50m, tocco = selezione + popup, bandiere emoji, lingua manuale: concordate, non ridiscuterle
 - [L'utente vuole i compromessi espliciti](utente-vuole-compromessi-espliciti.md) — prima domande e requisiti, poi codice; niente scelte silenziose
 - [Manca la toolchain Android](ambiente-senza-toolchain-android.md) — solo JDK 21: il Kotlin non si compila da qui, servono controlli manuali
 - [Gli heredoc Bash mangiano i backslash](bash-heredoc-mangia-backslash.md) — usare Write/Edit per scrivere file, non `<<'EOF'`

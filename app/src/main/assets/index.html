@@ -55,6 +55,52 @@
   .row.on .tg { border-color: var(--visited); }
   .empty { padding: 12px; font-size: 13px; color: #7b7b88; }
 
+  /* --- popup del paese selezionato ---------------------------------------
+     Vive nel layer htmlElements di globe.gl (un CSS2DRenderer): la posizione
+     la ricalcola la libreria a ogni frame, quindi la card resta incollata al
+     paese mentre la sfera ruota, senza codice di posizionamento qui dentro.
+     Il contenitore di quel layer ha pointer-events: none, cosi' il trascina-
+     mento del globo passa sotto: la card se li riaccende solo per se'. */
+  .pin { position: absolute; width: 0; height: 0; transition: opacity .18s ease; }
+  .pin.behind { opacity: 0; }           /* paese dietro l'orizzonte del globo */
+  .pin.behind .card { pointer-events: none; }
+
+  .pin .dot { position: absolute; left: -5px; top: -5px; width: 10px; height: 10px;
+              border-radius: 50%; border: 2px solid #e8e8ee; box-sizing: border-box; }
+  .pin .stem { position: absolute; left: -1px; top: -20px; width: 2px; height: 20px;
+               background: linear-gradient(to bottom, #3a3a46, rgba(58,58,70,0)); }
+
+  .pin .card { position: absolute; left: 0; top: 0;
+               transform: translate(-50%, calc(-100% - 20px));
+               pointer-events: auto; touch-action: manipulation;
+               min-width: 180px; max-width: 260px;
+               background: rgba(9,12,22,.94); border: 1px solid #2b2b36; border-radius: 14px;
+               padding: 10px 12px 11px; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+               backdrop-filter: blur(6px); }
+  .pin .hd { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+  /* Le bandiere sono emoji di sistema: nessun asset, nessuna rete. Su Android
+     ci sono; dove il font non le ha (Chrome su Windows) resta visibile la
+     coppia di lettere ISO, che dentro questa targhetta si legge lo stesso. */
+  .pin .flag { flex: none; width: 30px; height: 22px; border-radius: 4px; overflow: hidden;
+               border: 1px solid #2b2b36; background: #12121a;
+               display: grid; place-items: center;
+               font-family: "Noto Color Emoji", "Segoe UI Emoji", "Apple Color Emoji", system-ui, sans-serif;
+               font-size: 15px; line-height: 1; }
+  .pin .nm { font-size: 14px; font-weight: 600; line-height: 1.25; }
+
+  .pin .tgl { width: 100%; display: flex; align-items: center; justify-content: space-between;
+              gap: 12px; font: inherit; font-size: 13px; color: #e8e8ee; text-align: left;
+              background: #12121a; border: 1px solid #2b2b36; border-radius: 10px;
+              padding: 7px 9px; cursor: pointer; }
+  .pin .tgl .sw { flex: none; position: relative; width: 34px; height: 20px;
+                  border-radius: 999px; background: #2b2b36; transition: background .16s; }
+  .pin .tgl .sw i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+                    border-radius: 50%; background: #7b7b88;
+                    transition: transform .16s, background .16s; }
+  .pin .tgl[aria-checked="true"] { border-color: var(--visited); }
+  .pin .tgl[aria-checked="true"] .sw { background: rgba(255,140,26,.32); }
+  .pin .tgl[aria-checked="true"] .sw i { transform: translateX(14px); background: var(--visited); }
+
   #status { position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
             background: var(--bg); padding: 24px; text-align: center; font-size: 14px; line-height: 1.6; }
   #status.hidden { display: none; }
@@ -114,6 +160,9 @@
   var visited = new Set();
   var searchIndex = [];                // { key, label, hay, feat }
   var selIdx = -1;
+  var lang = 'it';                     // 'it' | 'en', spinta da Kotlin
+  var selected = null;                 // chiave del paese col popup aperto
+  var popupEls = null;                 // riferimenti dentro il popup in scena
 
   var $ = function (id) { return document.getElementById(id); };
   var statusEl = $('status');
@@ -174,7 +223,40 @@
   function countryNameIt(feat) {
     return rawProp(feat.properties || {}, ['NAME_IT']) || countryNameEn(feat);
   }
-  function countryName(feat) { return countryNameIt(feat); }
+  function countryName(feat) {
+    return lang === 'en' ? countryNameEn(feat) : countryNameIt(feat);
+  }
+
+  // ------------------------------------------------------------------ lingua
+  // La lingua la decide Kotlin (DataStore) e arriva con BeenThere.setLanguage.
+  // Qui servono le poche stringhe che la pagina disegna da se': il popup, che
+  // si vede anche su Android, e la chrome HTML del prototipo browser.
+  var STR = {
+    it: { visited: 'Visitato', visitedAria: 'Segna come visitato',
+          countries: 'paesi', noResults: 'Nessun paese trovato.',
+          searchPh: 'Cerca un paese…' },
+    en: { visited: 'Visited', visitedAria: 'Mark as visited',
+          countries: 'countries', noResults: 'No country found.',
+          searchPh: 'Search a country…' }
+  };
+  function t(key) { return (STR[lang] || STR.it)[key]; }
+
+  // Bandiera come emoji: due indicatori regionali costruiti dall'ISO_A2. Zero
+  // asset e zero rete, e su Android le disegna il font di sistema.
+  // Natural Earth mette ISO_A2 = "-99" su 9 feature; per le quattro che uno
+  // stato con bandiera ce l'hanno davvero si recupera da ADM0_A3. Le altre
+  // (Somaliland, Cipro del Nord, Siachen, i due territori australiani) non
+  // hanno un codice ISO: restano senza bandiera, con il solo nome.
+  var A2_FALLBACK = { FRA: 'FR', NOR: 'NO', KOS: 'XK', TWN: 'TW' };
+  function flagEmoji(feat) {
+    var p = feat.properties || {};
+    var a2 = rawProp(p, ['ISO_A2']);
+    if (!a2 || !/^[A-Za-z]{2}$/.test(a2)) a2 = A2_FALLBACK[rawProp(p, ['ADM0_A3'])] || null;
+    if (!a2) return null;
+    a2 = a2.toUpperCase();
+    return String.fromCodePoint(0x1F1E6 + a2.charCodeAt(0) - 65,
+                                0x1F1E6 + a2.charCodeAt(1) - 65);
+  }
 
   // Catalogo completo, passato una volta sola a Kotlin: da qui Compose ricava
   // l'indice di ricerca e il denominatore del contatore.
@@ -316,6 +398,92 @@
     if (world) world.polygonCapColor(function (f) { return capColor(f); });
   }
 
+  // -------------------------------------------------- popup del paese scelto
+  // Un tocco sul globo non segna piu' niente: apre questa card, che il layer
+  // htmlElements di globe.gl tiene ancorata al centroide del paese e sposta a
+  // ogni frame. Il toggle dentro la card e' l'unica via per marcare un
+  // visitato partendo dal globo.
+  var POPUP_ALT = POLY_ALT + 0.01;     // appena sopra la calotta del paese
+
+  function buildPopup(d) {
+    var feat = byKey[d.key];
+
+    var root = document.createElement('div');
+    root.className = 'pin';
+
+    var stem = document.createElement('div'); stem.className = 'stem';
+    var dot = document.createElement('div'); dot.className = 'dot';
+
+    var card = document.createElement('div'); card.className = 'card';
+    var hd = document.createElement('div'); hd.className = 'hd';
+
+    var flag = flagEmoji(feat);
+    if (flag) {
+      var flagEl = document.createElement('span');
+      flagEl.className = 'flag';
+      flagEl.textContent = flag;
+      hd.appendChild(flagEl);
+    }
+    var nameEl = document.createElement('span');
+    nameEl.className = 'nm';
+    hd.appendChild(nameEl);
+
+    var tgl = document.createElement('button');
+    tgl.className = 'tgl';
+    tgl.type = 'button';
+    tgl.setAttribute('role', 'switch');
+    var labelEl = document.createElement('span');
+    var sw = document.createElement('span'); sw.className = 'sw';
+    sw.appendChild(document.createElement('i'));
+    tgl.appendChild(labelEl);
+    tgl.appendChild(sw);
+    // stopPropagation: il tocco non deve raggiungere il listener sul document
+    // che chiude i risultati della ricerca.
+    tgl.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      applyToggle(d.key);
+    });
+
+    card.appendChild(hd);
+    card.appendChild(tgl);
+    root.appendChild(stem);
+    root.appendChild(dot);
+    root.appendChild(card);
+
+    popupEls = { key: d.key, name: nameEl, toggle: tgl, label: labelEl };
+    refreshPopup();
+    return root;
+  }
+
+  // Rigenera solo il testo e lo stato dell'interruttore: l'elemento in scena
+  // resta lo stesso, cosi' il popup non sfarfalla a ogni toggle.
+  function refreshPopup() {
+    if (!popupEls) return;
+    var feat = byKey[popupEls.key];
+    if (!feat) return;
+    popupEls.name.textContent = countryName(feat);
+    popupEls.label.textContent = t('visited');
+    popupEls.toggle.setAttribute('aria-label', t('visitedAria'));
+    popupEls.toggle.setAttribute('aria-checked', visited.has(popupEls.key) ? 'true' : 'false');
+  }
+
+  function selectCountry(key) {
+    var f = byKey[key];
+    if (!f || !world) return false;
+    var focus = focusOf(f);            // centroide dell'anello piu' grande
+    selected = key;
+    popupEls = null;                   // il layer ricostruira' l'elemento
+    world.htmlElementsData([{ key: key, lat: focus.lat, lng: focus.lng }]);
+    return true;
+  }
+
+  function clearSelection() {
+    if (!selected) return;
+    selected = null;
+    popupEls = null;
+    if (world) world.htmlElementsData([]);
+  }
+
   // -------------------------------------------------------- ponte con Kotlin
   function bridge() {
     return (typeof window.AndroidBridge !== 'undefined') ? window.AndroidBridge : null;
@@ -334,6 +502,7 @@
     repaint();
     updateCounter();
     refreshRowStates();
+    refreshPopup();
     saveDemo();
     notifyToggle(key, now);   // Kotlin persiste; può ri-pushare con setVisited()
   }
@@ -342,7 +511,7 @@
   function total() { return TOTAL_OVERRIDE != null ? TOTAL_OVERRIDE : features.length; }
   function updateCounter() {
     var el = $('counter');
-    if (el) el.innerHTML = '<b>' + visited.size + '</b> / ' + total() + ' paesi';
+    if (el) el.innerHTML = '<b>' + visited.size + '</b> / ' + total() + ' ' + t('countries');
   }
 
   function saveDemo() {
@@ -404,7 +573,7 @@
   function renderResults(list) {
     lastResults = list; selIdx = list.length ? 0 : -1;
     if (!list.length) {
-      resultsEl.innerHTML = '<div class="empty">Nessun paese trovato.</div>';
+      resultsEl.innerHTML = '<div class="empty">' + escapeHtml(t('noResults')) + '</div>';
       resultsEl.classList.add('open');
       return;
     }
@@ -414,7 +583,7 @@
              '<span class="nm">' + escapeHtml(e.label) + '</span>' +
              '<span class="cc">' + escapeHtml(e.key) + '</span>' +
              '<button class="tg" type="button" data-toggle="1" ' +
-             'aria-label="Segna come visitato"><i></i></button></div>';
+             'aria-label="' + escapeHtml(t('visitedAria')) + '"><i></i></button></div>';
     }).join('');
     resultsEl.classList.add('open');
   }
@@ -432,6 +601,7 @@
     $('ui').hidden = false;
     resultsEl = $('results');
     searchEl = $('search');
+    searchEl.placeholder = t('searchPh');
 
     searchEl.addEventListener('input', function () {
       var q = searchEl.value.trim();
@@ -448,22 +618,22 @@
         });
       } else if (ev.key === 'Enter' && selIdx >= 0) {
         ev.preventDefault();
-        flyTo(lastResults[selIdx].key);
+        flyTo(lastResults[selIdx].key); selectCountry(lastResults[selIdx].key);
         searchEl.blur(); closeResults();
       } else if (ev.key === 'Escape') {
         closeResults(); searchEl.blur();
       }
     });
 
-    // click sulla riga -> vola sul paese; click sul pallino -> toggle visitato.
-    // Il toggle da lista è la via di selezione per gli stati troppo piccoli
-    // da colpire con il dito sul globo.
+    // click sulla riga -> vola sul paese e ne apre il popup; click sul pallino
+    // -> toggle visitato. Il toggle da lista è la via di selezione per gli
+    // stati troppo piccoli da colpire con il dito sul globo.
     resultsEl.addEventListener('click', function (ev) {
       var row = ev.target.closest ? ev.target.closest('.row') : null;
       if (!row) return;
       var key = row.getAttribute('data-key');
       if (ev.target.closest('[data-toggle]')) { ev.stopPropagation(); applyToggle(key); return; }
-      flyTo(key); closeResults(); searchEl.blur();
+      flyTo(key); selectCountry(key); closeResults(); searchEl.blur();
     });
 
     document.addEventListener('pointerdown', function (ev) {
@@ -508,8 +678,27 @@
       .polygonSideColor(function () { return 'rgba(0,0,0,0)'; })
       .polygonStrokeColor(function () { return BORDER; })
       .polygonsTransitionDuration(0)             // niente tween -> niente geometrie rigenerate
-      .onPolygonClick(function (f) { if (f) applyToggle(countryKey(f)); })
-      .onPolygonHover(function (f) { document.body.style.cursor = f ? 'pointer' : 'default'; });
+      // Il tocco non segna piu' il paese: lo seleziona e apre il popup, dove
+      // il toggle e' esplicito. Toccare di nuovo lo stesso paese chiude.
+      .onPolygonClick(function (f) {
+        if (!f) return;
+        var key = countryKey(f);
+        if (key === selected) clearSelection(); else selectCountry(key);
+      })
+      .onPolygonHover(function (f) { document.body.style.cursor = f ? 'pointer' : 'default'; })
+      // Un tocco sull'oceano chiude: i poligoni stanno sopra la sfera, quindi
+      // questo scatta solo quando il raycast non ha incontrato nessun paese.
+      .onGlobeClick(function () { clearSelection(); })
+      // Layer htmlElements: la card del popup. La posizione la aggiorna
+      // globe.gl a ogni frame, e il modifier di visibilita' la fa sparire in
+      // dissolvenza quando il paese passa dietro l'orizzonte del globo.
+      .htmlElementsData([])
+      .htmlAltitude(POPUP_ALT)
+      .htmlTransitionDuration(0)
+      .htmlElement(function (d) { return buildPopup(d); })
+      .htmlElementVisibilityModifier(function (el, isVisible) {
+        el.classList.toggle('behind', !isVisible);
+      });
 
     // oceano
     try {
@@ -558,16 +747,40 @@
     // sostituisce integralmente lo stato: la sorgente di verità è DataStore
     setVisited: function (codes) {
       visited = new Set((codes || []).filter(function (k) { return !!byKey[k]; }));
-      repaint(); updateCounter(); refreshRowStates();
+      repaint(); updateCounter(); refreshRowStates(); refreshPopup();
     },
     setCountryVisited: function (code, isVisited) {
       if (!byKey[code]) return false;
       if (isVisited) visited.add(code); else visited.delete(code);
-      repaint(); updateCounter(); refreshRowStates();
+      repaint(); updateCounter(); refreshRowStates(); refreshPopup();
       return true;
     },
     getVisited: function () { return JSON.stringify(Array.from(visited)); },
-    focusCountry: function (code, ms) { return flyTo(code, ms); },
+    // Vola sul paese e ne apre il popup: la ricerca nativa e la lista dei
+    // visitati devono dare lo stesso risultato del tocco sul globo.
+    focusCountry: function (code, ms) {
+      var ok = flyTo(code, ms);
+      if (ok) selectCountry(code);
+      return ok;
+    },
+    /** Chiude il popup, se aperto. */
+    clearSelection: function () { clearSelection(); },
+    /**
+     * Lingua della pagina, spinta da Kotlin: cambia i nomi dei paesi (NAME_IT
+     * o NAME) e le poche stringhe disegnate qui. Rifa' anche l'indice di
+     * ricerca, che tiene le etichette gia' risolte nella lingua corrente.
+     */
+    setLanguage: function (tag) {
+      var next = (tag === 'en') ? 'en' : 'it';
+      if (next === lang) return lang;
+      lang = next;
+      if (features.length) buildSearchIndex();
+      if (searchEl) searchEl.placeholder = t('searchPh');
+      updateCounter();
+      if (lastResults.length) renderResults(searchCountries(searchEl ? searchEl.value : '', 12));
+      refreshPopup();
+      return lang;
+    },
     // per la ricerca lato Compose: JSON [{code,name}]
     search: function (q, limit) {
       return JSON.stringify(searchCountries(q, limit || 12).map(function (e) {

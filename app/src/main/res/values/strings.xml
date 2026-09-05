@@ -10,7 +10,7 @@
     <string name="search_no_results">Nessun paese trovato.</string>
 
     <string name="visited_title">Paesi visitati</string>
-    <string name="visited_empty">Nessun paese ancora. Tocca uno stato sul globo, oppure cercalo e usa il pallino a destra.</string>
+    <string name="visited_empty">Nessun paese ancora. Tocca uno stato sul globo e accendi Visitato nel popup, oppure cercalo e usa il pallino a destra.</string>
     <string name="mark_visited">Segna come visitato</string>
     <string name="unmark_visited">Togli dai visitati</string>
 
