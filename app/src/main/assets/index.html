@@ -13,6 +13,13 @@
     --bg:       #05070f;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Serve l'!important. La regola [hidden]{display:none} e' del foglio di stile
+     del browser, e QUALSIASI regola d'autore la batte: #ui{display:flex} qui
+     sotto vinceva, quindi l'attributo hidden su #ui non nascondeva niente. Su
+     Android la chrome HTML restava a schermo sopra la UI Compose, raddoppiando
+     contatore e campo di ricerca (e il duplicato era pure inerte, perche'
+     wireUi() giustamente non gira quando c'e' il bridge nativo). */
+  [hidden] { display: none !important; }
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%;
     background: var(--bg); color: #e8e8ee; overflow: hidden;
