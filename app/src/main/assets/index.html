@@ -150,12 +150,33 @@
   var LAND    = '#8a8a8a';
   var VISITED = '#ff8c1a';
   var BORDER  = '#33333a';
+  // Confine del paese selezionato. Bianco di proposito: non e' ne' il grigio
+  // del non visitato ne' l'arancione del visitato, cosi' "selezionato" resta
+  // leggibile sopra entrambi senza aggiungere un terzo significato al colore
+  // di riempimento.
+  var BORDER_SEL = '#ffffff';
   var BG      = '#05070f';
 
-  // Altitudine COSTANTE dei poligoni. Non deve mai dipendere da "visitato":
-  // in three-globe la geometria viene ricostruita solo se cambia l'altitudine,
-  // quindi tenendola fissa il toggle aggiorna esclusivamente il materiale.
+  // Altitudine dei poligoni. Verificato nel bundle di globe.gl 2.46.2: la
+  // calotta e' costruita con `new ConicPolygonGeometry(coords, 0, RAGGIO, ...)`
+  // e l'altitudine finisce solo in `group.scale = 1 + alt`. Non e' un
+  // parametro della geometria, quindi cambiarla NON ricostruisce nulla: la
+  // regola "l'altitudine deve restare costante" che stava scritta qui valeva
+  // per una versione precedente ed era diventata falsa.
   var POLY_ALT = 0.006;
+
+  // Sollevamento del paese selezionato, e serve per un motivo preciso.
+  // Ogni paese e' una fetta estrusa alta POLY_ALT (0,6 unita' su un globo di
+  // raggio 100) e il contorno gli galleggia sopra di appena 1e-4 di scala,
+  // cioe' 0,01 unita'. I confini sono condivisi: lungo una frontiera il
+  // contorno del paese A e quello di B sono geometrie coincidenti, e i muri
+  // laterali dei vicini - invisibili ma che scrivono nel depth buffer -
+  // arrivano esattamente alla stessa quota. Risultato: il bianco vinceva il
+  // test di profondita' solo su alcuni segmenti, a caso.
+  // Alzando il selezionato di 0,4 unita' - 40 volte quel margine - il suo
+  // contorno passa sopra i muri e i contorni di tutti i vicini, e il conflitto
+  // sparisce invece di essere solo reso meno probabile.
+  var SEL_LIFT = 0.004;
 
   // Su Android la chrome HTML resta spenta: contatore, ricerca e lista li fa
   // Compose parlando con window.BeenThere.*, e la verità sta in DataStore.
@@ -407,12 +428,28 @@
   // ------------------------------------------------------------ colorazione
   function capColor(feat) { return visited.has(countryKey(feat)) ? VISITED : LAND; }
 
-  // Ridipingere = ri-assegnare l'accessor del colore. three-globe rientra nel
-  // digest, riusa gli oggetti già in scena e tocca solo il materiale: la
-  // geometria non viene rigenerata perché POLY_ALT è costante.
+  // Il contorno del paese selezionato si accende: è l'unico aggancio visivo fra
+  // la card e la sagoma sotto, e serve soprattutto per i paesi piccoli, dove la
+  // card copre quasi tutto quello che indica.
+  function strokeColor(feat) {
+    return countryKey(feat) === selected ? BORDER_SEL : BORDER;
+  }
+  // Solo il selezionato sale, e di quel tanto che basta a scavalcare i muri
+  // laterali dei vicini (vedi SEL_LIFT).
+  function polyAltitude(feat) {
+    return countryKey(feat) === selected ? POLY_ALT + SEL_LIFT : POLY_ALT;
+  }
+
+  // Ridipingere = ri-assegnare gli accessor. three-globe rientra nel digest,
+  // riusa gli oggetti già in scena e tocca solo materiali e scale: la geometria
+  // dipende da coordinate, risoluzione, closedTop e includeSides, tutte
+  // costanti qui, quindi non viene mai ricostruita.
   // Wrapper nuovo a ogni chiamata: così il set del prop scatta sempre.
   function repaint() {
-    if (world) world.polygonCapColor(function (f) { return capColor(f); });
+    if (!world) return;
+    world.polygonCapColor(function (f) { return capColor(f); })
+         .polygonStrokeColor(function (f) { return strokeColor(f); })
+         .polygonAltitude(function (f) { return polyAltitude(f); });
   }
 
   // -------------------------------------------------- popup del paese scelto
@@ -491,6 +528,7 @@
     selected = key;
     popupEls = null;                   // il layer ricostruira' l'elemento
     world.htmlElementsData([{ key: key, lat: focus.lat, lng: focus.lng }]);
+    repaint();                         // accende il confine del selezionato
     return true;
   }
 
@@ -498,7 +536,10 @@
     if (!selected) return;
     selected = null;
     popupEls = null;
-    if (world) world.htmlElementsData([]);
+    if (world) {
+      world.htmlElementsData([]);
+      repaint();                       // spegne il confine
+    }
   }
 
   /**
@@ -712,10 +753,10 @@
       .atmosphereColor('#5b8fd6')
       .atmosphereAltitude(0.15)
       .polygonsData(features)
-      .polygonAltitude(POLY_ALT)                 // costante: nessun rebuild al toggle
+      .polygonAltitude(function (f) { return polyAltitude(f); })
       .polygonCapColor(function (f) { return capColor(f); })
       .polygonSideColor(function () { return 'rgba(0,0,0,0)'; })
-      .polygonStrokeColor(function () { return BORDER; })
+      .polygonStrokeColor(function (f) { return strokeColor(f); })
       .polygonsTransitionDuration(0)             // niente tween -> niente geometrie rigenerate
       // Il tocco non segna piu' il paese: lo seleziona e apre il popup, dove
       // il toggle e' esplicito. Toccare di nuovo lo stesso paese chiude.

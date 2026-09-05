@@ -102,6 +102,27 @@ più i dati. Toccare di nuovo lo stesso paese chiude, toccare l'oceano chiude,
 scegliere un paese dalla ricerca o dalla lista dei visitati vola e apre la
 stessa card.
 
+Il contorno del paese selezionato si accende di bianco (`BORDER_SEL`): è
+l'aggancio visivo fra la card e la sagoma, e conta soprattutto per i paesi
+piccoli, dove la card copre quasi tutto quello che indica. Il bianco è scelto
+perché non è né il grigio del non visitato né l'arancione del visitato, quindi
+"selezionato" resta leggibile sopra entrambi. Lo spessore non è regolabile — il
+contorno è un `LineSegments` con `LineBasicMaterial`, e `linewidth` in WebGL
+viene ignorato — quindi il segnale è solo cromatico.
+
+**Il paese selezionato viene sollevato** (`SEL_LIFT`), e non è un vezzo: senza,
+solo alcuni segmenti del contorno si illuminavano. Ogni paese è una fetta estrusa
+alta `POLY_ALT`, cioè 0,6 unità su un globo di raggio 100, e three-globe mette il
+contorno appena 1e-4 di scala sopra la calotta, 0,01 unità. Ma i confini sono
+condivisi: lungo una frontiera il contorno di A e quello di B sono geometrie
+**coincidenti**, e i muri laterali dei vicini — invisibili, perché
+`polygonSideColor` è trasparente, ma che scrivono comunque nel depth buffer —
+arrivano esattamente alla stessa quota. Il bianco vinceva il test di profondità
+a macchia di leopardo. Alzando il selezionato di 0,4 unità, 40 volte quel
+margine, il suo contorno passa sopra muri e contorni di tutti i vicini: il
+conflitto sparisce invece di essere solo reso meno probabile. Il sollevamento è
+impercettibile perché le pareti laterali sono trasparenti.
+
 La card vive nel layer `htmlElements` di globe.gl, cioè in un `CSS2DRenderer`:
 la posizione la ricalcola la libreria a ogni frame, quindi resta incollata al
 paese mentre la sfera ruota senza una riga di codice di posizionamento e senza
@@ -172,9 +193,16 @@ invertono tutti, preservando il verso relativo fra buchi ed esterno. Il file su
 disco resta RFC 7946: rigenerare il GeoJSON non riporta il bug.
 `polygonCapCurvatureResolution` resta al default di globe.gl.
 
-**Ricolore efficiente.** L'altitudine dei poligoni è una costante e le
-transizioni sono a zero: three-globe rigenera la geometria solo quando cambia
-l'altitudine, quindi un tocco riesegue soltanto l'accessor del colore.
+**Ricolore efficiente.** Un tocco riesegue solo gli accessor, mai la
+tassellatura. Nella `update` del layer poligoni di globe.gl 2.46.2 la geometria
+si ricostruisce solo se cambiano coordinate, `polygonCapCurvatureResolution`,
+`closedTop` o `includeSides` — tutti costanti qui. Il colore finisce in
+`material.color`, e **l'altitudine non è un parametro della geometria**: la
+calotta nasce come `ConicPolygonGeometry(coords, 0, RAGGIO, …)` e l'altitudine
+diventa solo `group.scale = 1 + alt`. Il README diceva il contrario, che
+cambiare altitudine rigenerasse la geometria: valeva per una versione
+precedente, ed è la ragione per cui il paese selezionato ora può essere
+sollevato senza costo.
 
 **Contatore.** Il denominatore è il numero di poligoni presenti nel dataset
 (~242), non 195: Natural Earth include territori non sovrani e non coincide con
