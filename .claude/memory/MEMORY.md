@@ -1,4 +1,5 @@
-- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — l'app gira sul telefono: cosa è stato corretto dopo il primo build
+- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — l'app gira sul telefono; il rendering è stato riscritto il 2026-09-06 ma non è ancora stato provato sull'S10e
+- [Provare index.html con Chrome](verifica-della-pagina-con-chrome.md) — l'estensione non c'è: Chrome headless da riga di comando, e perché il ciclo di disegno va provato con un Chrome vero
 - [Decisioni di prodotto di Been There](been-there-decisioni-prodotto.md) — dataset 50m, tocco = selezione + popup, bandiere emoji, lingua manuale: concordate, non ridiscuterle
 - [L'utente vuole i compromessi espliciti](utente-vuole-compromessi-espliciti.md) — prima domande e requisiti, poi codice; niente scelte silenziose
 - [Manca la toolchain Android](ambiente-senza-toolchain-android.md) — solo JDK 21: il Kotlin non si compila da qui, servono controlli manuali

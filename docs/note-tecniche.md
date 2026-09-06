@@ -97,20 +97,179 @@ punto-in-poligono all'avvio contro i 931 del default, una tantum. I 15 che
 restano sono territori minuscoli (Guam, Isola di Man, Åland, Fær Øer, Cipro,
 Lussemburgo, Brunei).
 
-Attenzione: questo, a differenza dell'altitudine, è un vero parametro della
-geometria. L'accessor viene rieseguito a ogni digest, quindi il valore è
-memoizzato sulla feature — se cambiasse, ritassellerebbe tutto.
+Il valore è memoizzato sulla feature perché l'accessor viene rieseguito a ogni
+digest e un valore ballerino ritassellerebbe tutto. Oggi la tassellatura avviene
+comunque **una volta sola**: appena pronta, le calotte vengono fuse e il layer
+poligoni viene smontato.
 
-## Ricolore efficiente
+## Una scena sola invece di 940 oggetti
 
-Un tocco riesegue solo gli accessor, mai la tassellatura. Nella `update` del
-layer poligoni di globe.gl 2.46.2 la geometria si ricostruisce solo se cambiano
-coordinate, `polygonCapCurvatureResolution`, `closedTop` o `includeSides` — tutti
-costanti qui. Il colore finisce in `material.color`, e **l'altitudine non è un
-parametro della geometria**: la calotta nasce come
-`ConicPolygonGeometry(coords, 0, RAGGIO, …)` e l'altitudine diventa solo
-`group.scale = 1 + alt`. È la ragione per cui il paese selezionato può essere
-sollevato senza costo.
+È la modifica che ha spostato il framerate. globe.gl disegna ogni poligono come
+un gruppo a sé, e un MultiPolygon ne produce uno per membro: i 242 paesi del
+dataset sono **470 poligoni**, cioè 470 mesh più 470 `LineSegments`, circa 1400
+draw call. Novecentoquaranta oggetti che three.js deve aggiornare, cullare e
+ordinare a ogni frame. Su una GPU del 2019 il collo di bottiglia non erano i
+triangoli — sono 118.510 in tutto, briciole — ma quel lavoro per-oggetto.
+
+C'era di peggio, e non si vedeva: globe.gl rilancia il **raycast del puntatore a
+ogni tick**, con un throttle di 50 ms, quindi venti volte al secondo anche a dito
+fermo, e quel raggio attraversava tutti e 940 gli oggetti. I `LineSegments` sono
+i più cari da provare, perché il test va fatto segmento per segmento.
+
+Ora il layer poligoni serve una volta sola, come fabbrica di geometrie: si
+prendono le calotte già tassellate, si fondono in **una** `BufferGeometry` con
+colore per-vertice, e `polygonsData([])` smonta i 940 oggetti. In scena restano
+la sfera dell'oceano, l'atmosfera, le calotte, la rete dei confini e il contorno
+del selezionato: **4 draw call** per frame, misurate.
+
+I costruttori di three non sono esportati dal bundle di globe.gl — anzi, il
+bundle guarda se `window.THREE` esiste per riusarlo, e non esiste — quindi
+`harvestThree()` li recupera dagli oggetti che la libreria ha appena creato. Per
+`BufferGeometry` serve risalire la catena dei prototipi: le geometrie di
+three-globe sono sottoclassi con costruttori che pretendono argomenti.
+
+**Ricolorare** non tocca più né geometria né scena: si riscrivono i float
+dell'attributo colore nell'intervallo di vertici di quel paese e si chiede un
+frame. Ogni feature ha il proprio `{ start, count }`, quindi segnare l'Italia non
+sfiora la Francia. Prima ogni toggle rientrava nel digest di globe.gl su 470
+gruppi.
+
+I colori per-vertice three.js li usa **in spazio lineare** così come sono, mentre
+`material.color.set('#8a8a8a')` passa per la conversione sRGB→lineare della
+gestione colore. Per non ritrovarsi grigi slavati, i valori si ricavano facendo
+il giro da un `THREE.Color`: qualunque sia la gestione colore attiva, escono
+esattamente i numeri che la libreria avrebbe usato.
+
+Le calotte sono disegnate a `FrontSide`. Dopo il riavvolgimento per d3-geo i
+triangoli guardano fuori dalla sfera, quindi il culling scarta l'emisfero
+nascosto prima di rasterizzarlo. Se un giorno le calotte sparissero, il primo
+sospettato è `CAP_SIDE`: rimetterlo a `2` (DoubleSide) le fa tornare.
+
+## Un confine solo per frontiera
+
+Prima ogni paese portava il proprio contorno, e lungo una frontiera il contorno
+di A e quello di B erano geometrie **coincidenti**. Non è una stima: sui 9235
+spigoli del dataset, **2143 comparivano esattamente due volte** — e mai tre, il
+che dice che la topologia è condivisa e i due spigoli hanno gli stessi identici
+vertici. Mapshaper la preserva, quindi una chiave canonica sui due estremi li
+riconosce senza tolleranze geometriche.
+
+Oggi i confini sono **una sola** `LineSegments` per tutto il pianeta, costruita
+deduplicando gli spigoli: 7548 segmenti, 177 KB, una draw call. Il contorno del
+paese selezionato è una seconda geometria che contiene i contorni di tutti i
+paesi con i vertici di ognuno contigui: accenderne uno costa un `setDrawRange`,
+senza costruire o buttare niente a ogni selezione.
+
+Gli spigoli vengono suddivisi a passi di 1,5 gradi perché la linea segua la
+curvatura invece di tagliare una corda che sprofonda nella sfera. Costa poco: lo
+spigolo più lungo del dataset misura 5,65 gradi, quindi 7092 spigoli unici
+diventano 7548 segmenti. L'unico caso da scartare a mano è lo spigolo di chiusura
+dell'Antartide, da `(-180,-90)` a `(180,-90)`: i due estremi sono lo stesso punto
+sulla sfera, il polo sud, ma interpolarli in lat/lng farebbe il giro del mondo.
+
+Sono spariti anche i **muri laterali**. Erano trasparenti (`polygonSideColor` a
+`rgba(0,0,0,0)`) ma esistevano, e scrivevano nel depth buffer: lungo ogni
+frontiera i muri di due paesi arrivavano alla stessa quota. Nel layer poligoni di
+globe.gl 2.46.2 un colore di fianco *falsy* vale `includeSides = false`, quindi
+passare `false` invece di un colore trasparente non li nasconde: non li
+costruisce proprio. Stessa cosa per `polygonStrokeColor`.
+
+## Perché i confini sfarfallavano
+
+Il doppio disegno era solo metà della storia. L'altra metà è il **depth buffer**.
+
+globe.gl imposta `camera.near = 0.05` e lascia `far` al valore di default. Con
+quella coppia il quanto di profondità a distanza `z` vale circa
+`z² / (near · 2^bit)`. Col globo inquadrato da lontano (z ≈ 340) fanno **0,14
+unità** con un depth buffer a 24 bit e **35 unità** se il dispositivo ne alloca
+uno a 16. Il contorno galleggiava sopra la calotta di 1e-4 di scala, cioè 0,01
+unità: quattordici volte meno del quanto nel caso buono, tremila volte meno nel
+caso cattivo. Il confronto di profondità fra calotta e contorno era rumore, e il
+vincitore cambiava a chiazze. È anche il motivo per cui il difetto **peggiorava
+rimpicciolendo il globo**: la precisione va col quadrato della distanza.
+
+La cura è `updateClipPlanes()`, che stringe `near` e `far` attorno al guscio che
+contiene globo e atmosfera a ogni movimento di camera. Il rapporto `far/near`
+resta piccolo a ogni zoom — misurato: 17 a globo intero, 2,2 dopo un volo — e il
+quanto scende sotto le 0,005 unità.
+
+Il confronto va fatto sui **valori**, non sulla distanza della camera. Una
+guardia del tipo "la distanza non è cambiata, non faccio niente" sembra
+ragionevole e invece è un bug: se qualcun altro rimette mano ai piani non te ne
+accorgi mai, e restano larghi proprio a globo fermo, cioè quando si guardano i
+confini.
+
+Con i piani stretti, le tre quote (`CAP_ALT`, `BORDER_ALT`, `SEL_ALT`) sono
+distanziate di 0,3 unità l'una dall'altra: sessanta volte il quanto peggiore. Da
+qui due conseguenze:
+
+- **il paese selezionato non viene più sollevato.** `SEL_LIFT` serviva a
+  scavalcare i muri laterali dei vicini e a battere il quanto di profondità;
+  senza muri e con i piani stretti non serve più, e il paese non fa più il
+  saltino quando lo si tocca;
+- **il contorno bianco è continuo.** Prima si accendeva a segmenti alterni.
+
+## Il tocco non passa più dal raycast
+
+Con la scena fusa le mesh su cui sparare un raggio sarebbero due o tre, e nessuna
+corrisponde più a un singolo paese. Quindi calotte, confini e alone
+dell'atmosfera vengono esclusi dal raycast (`restrictRaycast()`), e l'unico
+bersaglio resta la sfera del globo: `onGlobeClick` fornisce la lat/lng, e il
+paese lo decide un **point-in-polygon** sul GeoJSON, con un indice a griglia da 5
+gradi. 1588 celle occupate, al massimo 11 poligoni candidati per cella, mezzo
+microsecondo a tocco.
+
+È anche più esatto del raycast, perché prova la sagoma vera invece della sua
+triangolazione. L'unico scarto è la parallasse fra sfera e calotta, che sta 0,2
+unità più in alto: a 80 gradi di incidenza vale 0,65 gradi d'arco, cioè solo a
+filo dell'orizzonte, dove il paese è comunque schiacciato in pochi pixel.
+
+Effetto collaterale su desktop: sparisce il cursore a manina *sul singolo paese*.
+globe.gl aggiunge la classe `clickable` quando il puntatore sta sopra un oggetto
+con un gestore di click, e ora quell'oggetto è il globo intero: la manina c'è su
+tutto il globo, oceano compreso. Su Android non cambia niente.
+
+## Disegno su richiesta e risoluzione adattiva
+
+globe.gl tiene un `requestAnimationFrame` sempre acceso: ridisegna la scena e
+rilancia il raycast anche quando sullo schermo non cambia un pixel. Su un
+telefono è corrente sprecata, e la corrente sprecata diventa calore e quindi
+throttling, cioè meno framerate proprio durante l'uso.
+
+Ora il ciclo resta acceso finché c'è qualcosa da mostrare e si ferma dopo. Due
+dettagli non ovvi:
+
+- **la sveglia non può essere agganciata all'evento `change` dei controlli.** Col
+  damping acceso OrbitControls continua a emetterlo per movimenti infinitesimi, e
+  legarci il risveglio significa non addormentarsi mai. Si guarda invece lo
+  spostamento vero della camera, con una soglia di 0,002 unità: inquadrando il
+  globo a pieno schermo un pixel vale circa un quarto di unità, quindi si sta due
+  ordini di grandezza sotto il visibile;
+- **si tiene l'identificativo del frame, non un flag.** Ogni `wake()` annulla il
+  frame in sospeso e ne chiede uno nuovo, così ce n'è sempre esattamente uno e la
+  sorveglianza si riarma da sola. Con un flag booleano, un frame mai consegnato —
+  il browser può sospenderli, per esempio a scheda nascosta — lascerebbe la
+  sveglia bloccata per sempre.
+
+Ogni evento di puntatore riaccende, quindi anche se una sveglia si perdesse
+basterebbe toccare lo schermo.
+
+La **risoluzione** parte da `min(2, devicePixelRatio)`, che è già quello che fa
+globe.gl. Su un telefono con dpr 3 sono 2,25 volte meno pixel del pannello, ma su
+una GPU del 2019 anche 720×1520 possono non bastare. Se il ritmo resta sotto i
+~42 fps per un secondo intero si scende di un gradino (1,5 → 1,25 → 1). Non si
+risale mai: un su-e-giù continuo si vedrebbe. Il testo non ne risente, perché i
+nomi dei paesi li disegna Compose e la card del popup è HTML in un
+`CSS2DRenderer`, non dentro il canvas WebGL.
+
+`BeenThere.perf()` restituisce draw call, triangoli, risoluzione in uso e piani
+di taglio: è la via per controllare come sta andando sul telefono da
+`chrome://inspect`.
+
+**Nota su `controls`.** Non impostare `rotateSpeed` e `zoomSpeed`: globe.gl li
+ricalcola dall'altitudine a ogni evento `change` dei controlli, quindi qualsiasi
+valore scritto all'avvio viene sovrascritto al primo movimento. `minDistance`,
+`maxDistance`, `enablePan` e il damping invece restano.
 
 ## Il popup del paese
 
@@ -145,16 +304,13 @@ perché non è né il grigio del non visitato né l'arancione del visitato. Lo
 spessore non è regolabile: il contorno è un `LineSegments` con
 `LineBasicMaterial`, e `linewidth` in WebGL viene ignorato.
 
-**Il paese selezionato viene sollevato** (`SEL_LIFT`), e non è un vezzo: senza,
-solo alcuni segmenti del contorno si illuminavano. Ogni paese è una fetta estrusa
-alta `POLY_ALT`, cioè 0,6 unità su un globo di raggio 100, e three-globe mette il
-contorno appena 1e-4 di scala sopra la calotta, 0,01 unità. Ma i confini sono
-condivisi: lungo una frontiera il contorno di A e quello di B sono geometrie
-**coincidenti**, e i muri laterali dei vicini — invisibili, perché
-`polygonSideColor` è trasparente, ma che scrivono comunque nel depth buffer —
-arrivano alla stessa quota. Il bianco vinceva il test di profondità a macchia di
-leopardo. Alzando il selezionato di 0,2 unità, 20 volte quel margine, il conflitto
-sparisce invece di essere solo reso meno probabile.
+Il paese selezionato **non viene sollevato**. Lo era, con una costante
+`SEL_LIFT`, perché senza si illuminavano solo alcuni segmenti del contorno: il
+bianco vinceva il test di profondità a macchia di leopardo, contro i muri
+laterali dei vicini e contro il contorno coincidente del paese confinante.
+Tolti i muri e stretti i piani di taglio, la causa non c'è più e il sollevamento
+nemmeno — così il paese non fa più il saltino quando lo si tocca. Il perché per
+esteso sta in *Perché i confini sfarfallavano*.
 
 ## Bandiere
 

@@ -62,6 +62,12 @@ la UI Compose. A globo pronto il JavaScript passa a Kotlin l'intero catalogo dei
 paesi in una chiamata sola, e da lì la ricerca è tutta nativa. La verità sui
 visitati sta in DataStore, mai nella WebView.
 
+globe.gl serve solo a costruire la geometria, una volta sola: all'avvio le 470
+calotte vengono fuse in un'unica mesh e i confini in un'unica linea, con ogni
+frontiera disegnata una volta invece di due. Il pianeta intero costa **4 draw
+call** per frame, il ciclo di disegno si ferma a globo fermo e la risoluzione
+scende da sola se il telefono non tiene il passo.
+
 ## Gli asset
 
 `app/src/main/assets/` contiene tre file versionati nel repo, perché senza di
@@ -76,6 +82,7 @@ loro l'app non parte e non c'è rete da cui prenderli:
 ## Note tecniche
 
 Il perché delle scelte non ovvie — verso degli anelli del GeoJSON, tassellatura
-della calotta, profondità del contorno, bandiere su Windows, il Caspio — sta in
-[docs/note-tecniche.md](docs/note-tecniche.md). Da leggere prima di toccare il
-rendering.
+della calotta, la scena fusa, i confini deduplicati, i piani di taglio che
+tolgono lo sfarfallio, il tocco senza raycast, bandiere su Windows, il Caspio —
+sta in [docs/note-tecniche.md](docs/note-tecniche.md). Da leggere prima di
+toccare il rendering.

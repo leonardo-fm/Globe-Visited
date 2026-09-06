@@ -164,29 +164,40 @@
   var BORDER_SEL = '#ffffff';
   var BG      = '#05070f';
 
-  // Altitudine dei poligoni. Verificato nel bundle di globe.gl 2.46.2: la
-  // calotta e' costruita con `new ConicPolygonGeometry(coords, 0, RAGGIO, ...)`
-  // e l'altitudine finisce solo in `group.scale = 1 + alt`. Non e' un
-  // parametro della geometria, quindi cambiarla NON ricostruisce nulla: la
-  // regola "l'altitudine deve restare costante" che stava scritta qui valeva
-  // per una versione precedente ed era diventata falsa.
-  var POLY_ALT = 0.006;
+  // ALTITUDINI. Sono tre gusci distinti e non si toccano mai: calotte, rete dei
+  // confini, contorno del selezionato. Su un globo di raggio 100 la distanza
+  // fra un guscio e il successivo e' 0,3 unita'. Vale la pena spiegare da dove
+  // viene quel numero, perche' e' la meta' della cura allo sfarfallio.
+  //
+  // Prima erano 0,01 unita' (three-globe mette il contorno a 1e-4 di scala
+  // sopra la calotta) e il contorno lampeggiava a chiazze. Il colpevole non e'
+  // la geometria ma il depth buffer: globe.gl imposta camera.near = 0,05 e
+  // lascia far grandissimo, e con quella coppia il quanto di profondita' a
+  // distanza z vale circa z^2 / (near * 2^bit). Col globo inquadrato da lontano
+  // (z ~ 340) fanno 0,14 unita' a 24 bit e 35 unita' se il dispositivo alloca
+  // un depth buffer a 16 bit: quattordici e tremila volte la separazione che
+  // c'era. Il confronto di profondita' fra calotta e contorno diventava rumore,
+  // ed e' per questo che il difetto peggiorava rimpicciolendo il globo.
+  // La cura vera e' updateClipPlanes(), che stringe near/far attorno alla sfera
+  // a ogni movimento di camera; queste tre quote sono il margine di sicurezza
+  // che resta valido anche nel caso peggiore (16 bit, globo lontanissimo).
+  var CAP_ALT    = 0.002;   // calotte dei paesi
+  var BORDER_ALT = 0.005;   // rete dei confini, unica per tutto il pianeta
+  var SEL_ALT    = 0.008;   // contorno del paese selezionato
+  var POPUP_ALT  = 0.014;   // ancora della card
 
-  // Sollevamento del paese selezionato, e serve per un motivo preciso.
-  // Ogni paese e' una fetta estrusa alta POLY_ALT (0,6 unita' su un globo di
-  // raggio 100) e il contorno gli galleggia sopra di appena 1e-4 di scala,
-  // cioe' 0,01 unita'. I confini sono condivisi: lungo una frontiera il
-  // contorno del paese A e quello di B sono geometrie coincidenti, e i muri
-  // laterali dei vicini - invisibili ma che scrivono nel depth buffer -
-  // arrivano esattamente alla stessa quota. Risultato: il bianco vinceva il
-  // test di profondita' solo su alcuni segmenti, a caso.
-  // Alzando il selezionato di 0,2 unita' - 20 volte quel margine - il suo
-  // contorno passa sopra i muri e i contorni di tutti i vicini, e il conflitto
-  // sparisce invece di essere solo reso meno probabile. Scendere ancora si puo'
-  // (il margine da battere e' 0,01 unita', cioe' SEL_LIFT = 0.0001), ma sotto
-  // qualche decimo si torna nel campo dove l'arrotondamento del depth buffer
-  // decide da solo, e il difetto riapparirebbe a macchie.
-  var SEL_LIFT = 0.002;
+  // Suddivisione degli spigoli dei confini, in gradi. Lo spigolo piu' lungo del
+  // dataset misura 5,65 gradi, quindi con questo passo si suddivide poco (7092
+  // spigoli unici diventano 7549 segmenti) ma nessuna corda taglia dentro la
+  // sfera: la freccia di una corda di 1,5 gradi e' 0,0086 unita' su raggio 100,
+  // trentacinque volte meno del gradino fra un guscio e l'altro.
+  var BORDER_STEP_DEG = 1.5;
+
+  // Lato delle calotte. 0 = FrontSide: dopo il riavvolgimento per d3-geo i
+  // triangoli guardano fuori dalla sfera, quindi il culling delle facce
+  // posteriori scarta l'emisfero nascosto prima di rasterizzarlo. Se un giorno
+  // le calotte sparissero, il sospettato e' questo: 2 = DoubleSide le rimette.
+  var CAP_SIDE = 0;
 
   // TASSELLATURA DELLA CALOTTA.
   // three-conic-polygon-geometry costruisce la calotta triangolando con
@@ -218,13 +229,17 @@
   //    49 con l'uniforme a 1 grado, 27 con l'uniforme a 0.5, 15 con questa
   //    regola, poi si risale a 24 col minimo a 0.15 e a 45 col minimo a 0.05.
   // Costo: 103.735 test punto-in-poligono all'avvio contro i 931 del default,
-  // una tantum. E' un vero parametro della geometria - a differenza
-  // dell'altitudine - quindi si calcola una volta sola e si memorizza sulla
-  // feature: cambiarlo a runtime ritassellerebbe tutto.
+  // una tantum, e ora davvero una sola volta: le calotte vengono fuse in una
+  // mesh e il layer poligoni viene smontato subito dopo.
   var CAP_TARGET_PTS = 60;
   var CAP_RES_MIN = 0.25;
   var CAP_RES_MAX = 0.5;
   var DEG2_PER_SR = Math.pow(180 / Math.PI, 2);
+
+  // Lato delle celle dell'indice spaziale per il tocco, in gradi. Con 5 gradi
+  // il pianeta sta in 2592 celle, ne restano occupate 1588 e la cella piu'
+  // affollata offre 11 poligoni candidati: un tocco costa mezzo microsecondo.
+  var PICK_CELL_DEG = 5;
 
   // Su Android la chrome HTML resta spenta: contatore, ricerca e lista li fa
   // Compose parlando con window.BeenThere.*, e la verità sta in DataStore.
@@ -243,12 +258,22 @@
   var world = null;
   var features = [];
   var byKey = Object.create(null);     // chiave paese -> feature
+  var idxOf = Object.create(null);     // chiave paese -> indice in features
   var visited = new Set();
   var searchIndex = [];                // { key, label, hay, feat }
   var selIdx = -1;
   var lang = 'it';                     // 'it' | 'en', spinta da Kotlin
   var selected = null;                 // chiave del paese col popup aperto
   var popupEls = null;                 // riferimenti dentro il popup in scena
+
+  // scena costruita da noi (vedi buildMergedScene)
+  var capMesh = null;                  // unica mesh con TUTTE le calotte
+  var capColorAttr = null;             // attributo colore per-vertice
+  var capColorArr = null;
+  var capRange = [];                   // indice feature -> { start, count } in vertici
+  var outlineMesh = null;              // contorni per-paese, mostrati con setDrawRange
+  var outlineRange = [];               // indice feature -> { start, count } in vertici
+  var LAND_RGB = null, VISITED_RGB = null;
 
   var $ = function (id) { return document.getElementById(id); };
   var statusEl = $('status');
@@ -434,6 +459,14 @@
     return Math.abs(sr * 2) * DEG2_PER_SR;
   }
 
+  // Elenco dei poligoni di una feature, ognuno come array di anelli.
+  function polygonsOf(geom) {
+    if (!geom) return [];
+    if (geom.type === 'Polygon') return [geom.coordinates];
+    if (geom.type === 'MultiPolygon') return geom.coordinates;
+    return [];
+  }
+
   // Risoluzione di tassellatura di questa feature (vedi il blocco su
   // CAP_TARGET_PTS). Si guarda il poligono piu' grande: e' quello che detta
   // quanto grossi vengono i triangoli, e quindi quanto puo' essere grosso un
@@ -441,9 +474,7 @@
   // a ogni digest, e un valore che cambia farebbe ritassellare tutto.
   function capResolution(feat) {
     if (feat.__capRes) return feat.__capRes;
-    var geom = feat.geometry;
-    var polys = geom.type === 'Polygon' ? [geom.coordinates]
-              : geom.type === 'MultiPolygon' ? geom.coordinates : [];
+    var polys = polygonsOf(feat.geometry);
     var biggest = 0;
     for (var i = 0; i < polys.length; i++) {
       var a = polygonAreaDeg2(polys[i]);
@@ -455,10 +486,9 @@
   }
 
   function outerRings(geom) {
-    if (!geom) return [];
-    if (geom.type === 'Polygon') return [geom.coordinates[0]];
-    if (geom.type === 'MultiPolygon') return geom.coordinates.map(function (poly) { return poly[0]; });
-    return [];
+    var polys = polygonsOf(geom), out = [];
+    for (var i = 0; i < polys.length; i++) out.push(polys[i][0]);
+    return out;
   }
   function ringArea(r) {
     var a = 0;
@@ -502,31 +532,628 @@
     return feat.__focus;
   }
 
+  // ------------------------------------------------- indice spaziale e tocco
+  // Il tocco non passa piu' dal raycast. Con la scena fusa le mesh su cui
+  // sparare un raggio sarebbero due o tre, e nessuna corrisponde piu' a un
+  // singolo paese; ma soprattutto il raycast di globe.gl gira a ogni frame (20
+  // volte al secondo, throttle di 50 ms) e prima doveva attraversare 940
+  // oggetti fra calotte e contorni. Qui si prende la lat/lng dove il raggio ha
+  // incontrato la sfera - quella globe.gl la fornisce gia' in onGlobeClick - e
+  // si cerca il paese con un point-in-polygon sul GeoJSON.
+  //
+  // E' anche piu' esatto del raycast: prova la sagoma vera invece della sua
+  // triangolazione. L'unico scarto e' la parallasse fra sfera e calotta, che
+  // sta 0,2 unita' piu' in alto: a 80 gradi di incidenza vale 0,65 gradi
+  // d'arco, cioe' solo a filo dell'orizzonte, dove il paese e' comunque
+  // schiacciato in pochi pixel.
+  var PICK_NX = Math.round(360 / PICK_CELL_DEG);
+  var PICK_NY = Math.round(180 / PICK_CELL_DEG);
+  var pickGrid = null;                 // cella -> array di indici in pickParts
+  var pickParts = [];                  // { rings, minX, minY, maxX, maxY, fi, area }
+
+  function buildPickIndex() {
+    pickGrid = new Array(PICK_NX * PICK_NY);
+    pickParts = [];
+    for (var fi = 0; fi < features.length; fi++) {
+      var polys = polygonsOf(features[fi].geometry);
+      for (var pi = 0; pi < polys.length; pi++) {
+        var ring = polys[pi][0];
+        var minX = 180, minY = 90, maxX = -180, maxY = -90;
+        for (var k = 0; k < ring.length; k++) {
+          var c = ring[k];
+          if (c[0] < minX) minX = c[0];
+          if (c[0] > maxX) maxX = c[0];
+          if (c[1] < minY) minY = c[1];
+          if (c[1] > maxY) maxY = c[1];
+        }
+        var part = {
+          rings: polys[pi], minX: minX, minY: minY, maxX: maxX, maxY: maxY,
+          fi: fi, area: (maxX - minX) * (maxY - minY)
+        };
+        var idx = pickParts.length;
+        pickParts.push(part);
+        var cx0 = Math.max(0, Math.floor((minX + 180) / PICK_CELL_DEG));
+        var cx1 = Math.min(PICK_NX - 1, Math.floor((maxX + 180) / PICK_CELL_DEG));
+        var cy0 = Math.max(0, Math.floor((minY + 90) / PICK_CELL_DEG));
+        var cy1 = Math.min(PICK_NY - 1, Math.floor((maxY + 90) / PICK_CELL_DEG));
+        for (var cy = cy0; cy <= cy1; cy++) {
+          for (var cx = cx0; cx <= cx1; cx++) {
+            var cell = cy * PICK_NX + cx;
+            if (!pickGrid[cell]) pickGrid[cell] = [];
+            pickGrid[cell].push(idx);
+          }
+        }
+      }
+    }
+  }
+
+  function inRing(ring, x, y) {
+    var inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      var xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  /** Paese sotto una coordinata geografica, o null se e' oceano. */
+  function countryAt(lat, lng) {
+    if (!pickGrid) return null;
+    var cx = Math.min(PICK_NX - 1, Math.max(0, Math.floor((lng + 180) / PICK_CELL_DEG)));
+    var cy = Math.min(PICK_NY - 1, Math.max(0, Math.floor((lat + 90) / PICK_CELL_DEG)));
+    var cand = pickGrid[cy * PICK_NX + cx];
+    if (!cand) return null;
+    var best = -1, bestArea = Infinity;
+    for (var i = 0; i < cand.length; i++) {
+      var p = pickParts[cand[i]];
+      if (lng < p.minX || lng > p.maxX || lat < p.minY || lat > p.maxY) continue;
+      if (!inRing(p.rings[0], lng, lat)) continue;
+      var hole = false;
+      for (var r = 1; r < p.rings.length; r++) {
+        if (inRing(p.rings[r], lng, lat)) { hole = true; break; }
+      }
+      if (hole) continue;
+      // Il poligono piu' piccolo vince: se un enclave e' modellato sia come
+      // buco che come poligono a se' (Lesotho), si sceglie l'enclave.
+      if (p.area < bestArea) { bestArea = p.area; best = p.fi; }
+    }
+    return best < 0 ? null : features[best];
+  }
+
   // ------------------------------------------------------------ colorazione
-  function capColor(feat) { return visited.has(countryKey(feat)) ? VISITED : LAND; }
-
-  // Il contorno del paese selezionato si accende: è l'unico aggancio visivo fra
-  // la card e la sagoma sotto, e serve soprattutto per i paesi piccoli, dove la
-  // card copre quasi tutto quello che indica.
-  function strokeColor(feat) {
-    return countryKey(feat) === selected ? BORDER_SEL : BORDER;
-  }
-  // Solo il selezionato sale, e di quel tanto che basta a scavalcare i muri
-  // laterali dei vicini (vedi SEL_LIFT).
-  function polyAltitude(feat) {
-    return countryKey(feat) === selected ? POLY_ALT + SEL_LIFT : POLY_ALT;
+  function capColorRgb(feat) {
+    return visited.has(countryKey(feat)) ? VISITED_RGB : LAND_RGB;
   }
 
-  // Ridipingere = ri-assegnare gli accessor. three-globe rientra nel digest,
-  // riusa gli oggetti già in scena e tocca solo materiali e scale: la geometria
-  // dipende da coordinate, risoluzione, closedTop e includeSides, tutte
-  // costanti qui, quindi non viene mai ricostruita.
-  // Wrapper nuovo a ogni chiamata: così il set del prop scatta sempre.
+  /** Riscrive il colore per-vertice di una singola feature. */
+  function paintFeature(fi) {
+    if (!capColorArr) return;
+    var r = capRange[fi];
+    if (!r) return;
+    var c = capColorRgb(features[fi]);
+    var end = (r.start + r.count) * 3;
+    for (var i = r.start * 3; i < end; i += 3) {
+      capColorArr[i] = c[0]; capColorArr[i + 1] = c[1]; capColorArr[i + 2] = c[2];
+    }
+    capColorAttr.needsUpdate = true;
+  }
+
+  // Ridipingere non tocca piu' ne' geometria ne' scena: si riscrivono byte in
+  // un attributo e si chiede un frame. Prima ogni toggle rientrava nel digest
+  // di globe.gl su 470 gruppi.
   function repaint() {
+    if (!capColorArr) return;
+    for (var fi = 0; fi < features.length; fi++) paintFeature(fi);
+    capColorAttr.needsUpdate = true;
+    wake();
+  }
+  function repaintOne(key) {
+    var fi = idxOf[key];
+    if (fi == null) return;
+    paintFeature(fi);
+    wake();
+  }
+
+  // ------------------------------------------- costruzione della scena fusa
+  //
+  // globe.gl disegna ogni poligono come un gruppo a se': 470 poligoni fanno 470
+  // mesh piu' 470 LineSegments, cioe' circa 1400 draw call e 940 oggetti che
+  // three.js deve aggiornare, cullare e ordinare a ogni frame - e che il
+  // raycast di hover deve attraversare venti volte al secondo. Su un telefono
+  // del 2019 e' quello, non il numero di triangoli, a mangiarsi il frame.
+  //
+  // Qui il layer poligoni viene usato una volta sola come fabbrica di
+  // geometrie: si prendono le calotte gia' tassellate, si fondono in UNA mesh
+  // con colore per-vertice, e il layer viene smontato. Restano tre oggetti in
+  // tutto: calotte, rete dei confini, contorno del selezionato.
+
+  var THREE = null;                    // costruttori raccolti dagli oggetti vivi
+
+  // three non e' esportato dal bundle di globe.gl (anzi, il bundle guarda se
+  // window.THREE esiste per riusarlo, e qui non esiste). I costruttori si
+  // prendono dagli oggetti che la libreria ha appena creato.
+  function harvestThree(group) {
+    var mesh = group.children[0];
+    var line = group.children[1];
+    var pos = mesh.geometry.getAttribute('position');
+    // Le geometrie di three-globe sono sottoclassi di BufferGeometry con
+    // costruttori che pretendono argomenti: si risale la catena finche' il
+    // prototipo superiore non ha piu' setAttribute, cioe' fino a
+    // BufferGeometry, il cui prototipo e' EventDispatcher.
+    var proto = Object.getPrototypeOf(mesh.geometry);
+    while (proto) {
+      var up = Object.getPrototypeOf(proto);
+      if (!up || typeof up.setAttribute !== 'function') break;
+      proto = up;
+    }
+    return {
+      BufferGeometry: proto.constructor,
+      Float32BufferAttribute: pos.constructor,
+      Mesh: mesh.constructor,
+      LineSegments: line.constructor,
+      LineBasicMaterial: line.material.constructor,
+      MeshBasicMaterial: group.__defaultCapMaterial.constructor,
+      Color: group.__defaultCapMaterial.color.constructor
+    };
+  }
+
+  // I colori per-vertice three.js li usa cosi' come sono, in spazio lineare,
+  // mentre material.color.set('#8a8a8a') passa per la conversione sRGB->lineare
+  // della gestione colore. Facendo il giro da un THREE.Color si ottengono
+  // esattamente i valori che la libreria avrebbe usato, qualunque sia la
+  // gestione colore attiva: il grigio e l'arancione restano quelli richiesti.
+  function toLinearRgb(hex) {
+    var c = new THREE.Color();
+    c.set(hex);
+    return [c.r, c.g, c.b];
+  }
+
+  var noRaycast = function () {};
+
+  function polygonGroups() {
+    var out = [];
+    world.scene().traverse(function (o) {
+      if (o.__globeObjType === 'polygon') out.push(o);
+    });
+    return out;
+  }
+
+  /** Numero di poligoni attesi (un MultiPolygon ne produce uno per membro). */
+  function expectedPolygonCount() {
+    var n = 0;
+    for (var i = 0; i < features.length; i++) n += polygonsOf(features[i].geometry).length;
+    return n;
+  }
+
+  /**
+   * Il layer poligoni non costruisce le geometrie in modo sincrono: kapsule
+   * rimanda il digest, e globe.gl lo rimanda ancora finche' il globo non e'
+   * pronto. Si aspetta che tutti i gruppi esistano e abbiano una geometria.
+   */
+  function waitForPolygons(want, onReady, onTimeout) {
+    var deadline = performance.now() + 20000;
+    (function poll() {
+      var gs = polygonGroups();
+      var ready = gs.length >= want;
+      if (ready) {
+        for (var i = 0; i < gs.length; i++) {
+          var m = gs[i].children[0];
+          if (!m || !m.geometry || !m.geometry.getAttribute('position')) { ready = false; break; }
+        }
+      }
+      if (ready) { onReady(gs); return; }
+      if (performance.now() > deadline) { onTimeout(gs.length, want); return; }
+      requestAnimationFrame(poll);
+    })();
+  }
+
+  /** Fonde le calotte in una sola mesh, con un intervallo di vertici per paese. */
+  function buildCapMesh(groups) {
+    // gruppo -> feature. Il dataMapper di globe.gl appende il dato avvolto
+    // sull'oggetto three come __data, e il campo .data e' la feature originale.
+    var byFeat = new Map();
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i];
+      var f = g.__data && g.__data.data;
+      var m = g.children[0];
+      if (!f || !m || !m.geometry) continue;
+      var arr = byFeat.get(f);
+      if (!arr) { arr = []; byFeat.set(f, arr); }
+      arr.push(m);
+    }
+
+    var totV = 0, totI = 0, fi, j, meshes, geom, pos, ind;
+    for (fi = 0; fi < features.length; fi++) {
+      meshes = byFeat.get(features[fi]) || [];
+      for (j = 0; j < meshes.length; j++) {
+        geom = meshes[j].geometry;
+        pos = geom.getAttribute('position');
+        ind = geom.getIndex();
+        totV += pos.count;
+        totI += ind ? ind.count : pos.count;
+      }
+    }
+
+    var position = new Float32Array(totV * 3);
+    var color = new Float32Array(totV * 3);
+    var index = new Array(totI);
+    var vo = 0, io = 0;
+
+    for (fi = 0; fi < features.length; fi++) {
+      meshes = byFeat.get(features[fi]) || [];
+      var start = vo;
+      var rgb = capColorRgb(features[fi]);
+      for (j = 0; j < meshes.length; j++) {
+        var mesh = meshes[j];
+        geom = mesh.geometry;
+        pos = geom.getAttribute('position');
+        ind = geom.getIndex();
+        // La calotta nasce a raggio del globo e l'altitudine finisce nella
+        // scala della mesh: qui la si incorpora nei vertici, cosi' l'oggetto
+        // fuso sta a scala 1 e non serve toccarlo mai piu'.
+        var s = mesh.scale.x || 1;
+        var src = pos.array, base = vo * 3;
+        for (var v = 0, n = pos.count * 3; v < n; v++) position[base + v] = src[v] * s;
+        var cb = vo * 3;
+        for (var q = 0, qn = pos.count; q < qn; q++) {
+          color[cb + q * 3] = rgb[0];
+          color[cb + q * 3 + 1] = rgb[1];
+          color[cb + q * 3 + 2] = rgb[2];
+        }
+        if (ind) {
+          for (var k = 0, kn = ind.count; k < kn; k++) index[io + k] = vo + ind.getX(k);
+          io += ind.count;
+        } else {
+          for (var k2 = 0, kn2 = pos.count; k2 < kn2; k2++) index[io + k2] = vo + k2;
+          io += pos.count;
+        }
+        vo += pos.count;
+      }
+      capRange[fi] = { start: start, count: vo - start };
+    }
+
+    var g2 = new THREE.BufferGeometry();
+    g2.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+    var colAttr = new THREE.Float32BufferAttribute(color, 3);
+    g2.setAttribute('color', colAttr);
+    // Float32BufferAttribute copia l'array che riceve: per poter riscrivere i
+    // colori a ogni toggle bisogna tenere il buffer che e' finito dentro.
+    capColorArr = colAttr.array;
+    capColorAttr = colAttr;
+    // setIndex con un Array normale sceglie da solo fra Uint16 e Uint32.
+    g2.setIndex(index);
+    g2.computeBoundingSphere();
+
+    var mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: CAP_SIDE });
+    capMesh = new THREE.Mesh(g2, mat);
+    capMesh.raycast = noRaycast;          // il tocco passa da countryAt()
+    capMesh.renderOrder = 0;
+    return { vertices: totV, triangles: totI / 3 };
+  }
+
+  // Trasforma lat/lng in coordinate del globo passando dalla libreria, cosi'
+  // la proiezione resta la stessa delle calotte anche se globe.gl cambia.
+  function coordsAt(lat, lng, alt, out) {
+    var p = world.getCoords(lat, lng, alt);
+    out.push(p.x, p.y, p.z);
+  }
+
+  /**
+   * Aggiunge uno spigolo suddiviso a un array piatto di coppie di vertici.
+   * La suddivisione e' lineare in lat/lng, la stessa che usa three-globe per
+   * i contorni: cosi' la linea segue il bordo della calotta invece di tagliare
+   * una corda che sprofonda dentro la sfera.
+   */
+  function pushEdge(out, a, b, alt) {
+    var dLng = b[0] - a[0];
+    // Unico caso nel dataset: lo spigolo di chiusura dell'Antartide, da
+    // (-180,-90) a (180,-90). I due estremi sono lo stesso punto sulla sfera,
+    // il polo sud, ma interpolarli in lat/lng farebbe il giro del mondo.
+    if (Math.abs(dLng) > 180) return;
+    var dLat = b[1] - a[1];
+    var mLat = (a[1] + b[1]) * 0.5 * Math.PI / 180;
+    var len = Math.sqrt(dLat * dLat + dLng * dLng * Math.cos(mLat) * Math.cos(mLat));
+    var steps = Math.max(1, Math.ceil(len / BORDER_STEP_DEG));
+    var px = a[0], py = a[1];
+    for (var i = 1; i <= steps; i++) {
+      var f = i / steps;
+      var qx = a[0] + dLng * f, qy = a[1] + dLat * f;
+      coordsAt(py, px, alt, out);
+      coordsAt(qy, qx, alt, out);
+      px = qx; py = qy;
+    }
+  }
+
+  function forEachRingOf(feat, fn) {
+    var polys = polygonsOf(feat.geometry);
+    for (var p = 0; p < polys.length; p++) {
+      for (var r = 0; r < polys[p].length; r++) fn(polys[p][r]);
+    }
+  }
+
+  /**
+   * Rete dei confini: UNA LineSegments per tutto il pianeta, con ogni spigolo
+   * disegnato una volta sola.
+   *
+   * Prima ogni paese portava il proprio contorno, e lungo una frontiera i
+   * contorni di A e di B erano geometrie coincidenti: 2143 spigoli sui 9235 del
+   * dataset venivano disegnati due volte, uno sopra l'altro. Con il depth test
+   * che non riusciva a separarli (vedi il blocco sulle altitudini) il risultato
+   * era il tremolio dei confini, tanto piu' evidente quanto piu' il globo era
+   * piccolo. Il dataset ha topologia condivisa - mapshaper la preserva - quindi
+   * i due spigoli hanno gli stessi identici vertici e la chiave canonica li
+   * riconosce senza tolleranze: verificato, nessuno spigolo compare piu' di due
+   * volte.
+   */
+  function buildBorderNetwork() {
+    var seen = Object.create(null);
+    var out = [];
+    var dropped = 0;
+    for (var i = 0; i < features.length; i++) {
+      forEachRingOf(features[i], function (ring) {
+        for (var k = 0; k < ring.length - 1; k++) {
+          var a = ring[k], b = ring[k + 1];
+          var ka = a[0] + ',' + a[1], kb = b[0] + ',' + b[1];
+          var key = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+          if (seen[key]) { dropped++; continue; }
+          seen[key] = 1;
+          pushEdge(out, a, b, BORDER_ALT);
+        }
+      });
+    }
+    var geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(out), 3));
+    geom.computeBoundingSphere();
+    var mat = new THREE.LineBasicMaterial({ color: BORDER });
+    var lines = new THREE.LineSegments(geom, mat);
+    lines.raycast = noRaycast;
+    lines.renderOrder = 1;
+    return { object: lines, segments: out.length / 6, dropped: dropped };
+  }
+
+  /**
+   * Contorni per paese, tutti in una geometria sola con i vertici di ogni paese
+   * contigui. Mostrarne uno costa un setDrawRange: niente geometrie costruite o
+   * buttate a ogni selezione, e nessun secondo oggetto in scena.
+   */
+  function buildOutlines() {
+    var out = [];
+    for (var i = 0; i < features.length; i++) {
+      var start = out.length / 3;
+      forEachRingOf(features[i], function (ring) {
+        for (var k = 0; k < ring.length - 1; k++) pushEdge(out, ring[k], ring[k + 1], SEL_ALT);
+      });
+      outlineRange[i] = { start: start, count: out.length / 3 - start };
+    }
+    var geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(out), 3));
+    geom.computeBoundingSphere();
+    var mat = new THREE.LineBasicMaterial({ color: BORDER_SEL });
+    outlineMesh = new THREE.LineSegments(geom, mat);
+    outlineMesh.raycast = noRaycast;
+    outlineMesh.renderOrder = 2;
+    outlineMesh.visible = false;
+    outlineMesh.frustumCulled = false;   // il draw range cambia, la bounding sphere no
+    return { vertices: out.length / 3 };
+  }
+
+  /**
+   * Il raggio del puntatore deve incontrare solo la sfera del globo. Tutto il
+   * resto - calotte, confini, alone dell'atmosfera - viene escluso: il paese lo
+   * decide countryAt() sulla lat/lng, e il raycast di globe.gl gira comunque
+   * venti volte al secondo anche a dito fermo.
+   */
+  function restrictRaycast() {
+    var globeGroup = null;
+    world.scene().traverse(function (o) {
+      if (o.__globeObjType === 'globe') globeGroup = o;
+    });
+    if (!globeGroup) { console.warn('[BeenThere] gruppo globo non trovato: raycast invariato'); return; }
+    var keep = new Set();
+    globeGroup.traverse(function (o) { keep.add(o); });
+    world.scene().traverse(function (o) {
+      if ((o.isMesh || o.isLine || o.isPoints) && !keep.has(o)) o.raycast = noRaycast;
+    });
+  }
+
+  function buildMergedScene(groups) {
+    THREE = harvestThree(groups[0]);
+    LAND_RGB = toLinearRgb(LAND);
+    VISITED_RGB = toLinearRgb(VISITED);
+
+    var caps = buildCapMesh(groups);
+    var borders = buildBorderNetwork();
+    var outlines = buildOutlines();
+
+    // Gli oggetti vanno nello stesso gruppo dei poligoni: e' il sistema di
+    // riferimento in cui la libreria ha costruito le calotte e in cui
+    // getCoords() restituisce le sue coordinate. Il layer poligoni svuota quel
+    // gruppo solo in init, che e' gia' passato, e il digest successivo rimuove
+    // soltanto gli oggetti che ha creato lui.
+    var parent = groups[0].parent;
+    parent.add(capMesh);
+    parent.add(borders.object);
+    parent.add(outlineMesh);
+
+    // Smonta le 470 mesh e i 470 contorni: da qui in poi la scena e' la nostra.
+    world.polygonsData([]);
+    restrictRaycast();
+
+    console.log('[BeenThere] scena fusa: ' + caps.vertices + ' vertici, ' +
+                caps.triangles + ' triangoli in 1 mesh; confini ' +
+                borders.segments + ' segmenti (' + borders.dropped +
+                ' spigoli condivisi disegnati una volta sola); contorni ' +
+                outlines.vertices + ' vertici');
+  }
+
+  // ------------------------------------------------------- piani di taglio
+  //
+  // Il rimedio decisivo allo sfarfallio. globe.gl imposta camera.near = 0.05 e
+  // lascia far al valore di default: la precisione del depth buffer va come
+  // z^2/(near * 2^bit), quindi a globo lontano il quanto di profondita' arriva
+  // a 0,14 unita' con un depth a 24 bit e a decine di unita' con uno a 16.
+  // Qualsiasi cosa si disegni a pochi centesimi di unita' sopra la calotta
+  // finisce dentro quel rumore, e il confronto lo vince chi capita.
+  // Stringendo near e far attorno al guscio che contiene globo e atmosfera il
+  // rapporto far/near resta piccolo a ogni distanza e il quanto scende sotto le
+  // 0,005 unita', cioe' sessanta volte meno del gradino fra i nostri gusci.
+  // Guscio che deve stare fra i due piani: raggio del globo, piu' l'atmosfera
+  // (0.15), piu' margine. A zoom massimo (distanza 700) da near 575 e far 825,
+  // contro una geometria che va da 585 a 815: dieci unita' di margine da
+  // entrambi i lati.
+  var SHELL = 1.25;
+
+  // Si confrontano i valori, non la distanza: e' l'unico modo per accorgersi
+  // che qualcun altro ha rimesso mano ai piani. globe.gl riporta far al proprio
+  // default quando la camera si ferma, e una guardia basata sulla sola
+  // distanza non se ne accorgeva mai - i piani restavano larghi proprio a
+  // globo fermo, cioe' quando si guardano i confini.
+  function updateClipPlanes() {
     if (!world) return;
-    world.polygonCapColor(function (f) { return capColor(f); })
-         .polygonStrokeColor(function (f) { return strokeColor(f); })
-         .polygonAltitude(function (f) { return polyAltitude(f); });
+    var cam = world.camera();
+    var d = cam.position.length();
+    if (!(d > 0)) return;
+    var shell = world.getGlobeRadius() * SHELL;
+    var near = Math.max(0.5, d - shell);
+    var far = d + shell;
+    if (cam.near === near && cam.far === far) return;
+    cam.near = near;
+    cam.far = far;
+    cam.updateProjectionMatrix();
+  }
+
+  // ------------------------------------------------- disegno su richiesta
+  //
+  // globe.gl tiene un requestAnimationFrame sempre acceso: ridisegna la scena e
+  // rilancia il raycast del puntatore anche quando non si sta toccando niente e
+  // sullo schermo non cambia un pixel. Su un telefono e' corrente sprecata, e
+  // la corrente sprecata diventa calore e quindi throttling, cioe' meno
+  // framerate proprio durante l'uso.
+  //
+  // Qui il ciclo resta acceso finche' c'e' qualcosa da mostrare - un dito sullo
+  // schermo, l'inerzia dei controlli, un volo verso un paese, un colore appena
+  // cambiato - e si ferma dopo. Ogni evento di puntatore riaccende, quindi
+  // anche se una sveglia si perdesse basterebbe toccare lo schermo.
+  var awakeUntil = 0, superviseRaf = 0, animPaused = false;
+  var IDLE_GRACE_MS = 900;
+
+  /**
+   * La camera si e' mossa abbastanza da cambiare un pixel?
+   *
+   * Il criterio non puo' essere l'evento change dei controlli: con il damping
+   * acceso OrbitControls continua a emetterlo per movimenti infinitesimi, e
+   * legarci la sveglia significava non addormentarsi mai. Qui si guarda lo
+   * spostamento vero. La soglia e' 0,002 unita' su un globo di raggio 100:
+   * inquadrando il globo a pieno schermo un pixel vale circa un quarto di
+   * unita', quindi si sta due ordini di grandezza sotto il visibile.
+   */
+  var lastCamX = NaN, lastCamY = 0, lastCamZ = 0;
+  function cameraMoved() {
+    var p = world.camera().position;
+    if (lastCamX !== lastCamX) {        // primo giro
+      lastCamX = p.x; lastCamY = p.y; lastCamZ = p.z;
+      return true;
+    }
+    var dx = p.x - lastCamX, dy = p.y - lastCamY, dz = p.z - lastCamZ;
+    if (dx * dx + dy * dy + dz * dz <= 4e-6) return false;
+    lastCamX = p.x; lastCamY = p.y; lastCamZ = p.z;
+    return true;
+  }
+
+  // Si tiene l'identificativo del frame invece di un flag "sto sorvegliando":
+  // ogni wake() annulla il frame in sospeso e ne chiede uno nuovo, quindi ce
+  // n'e' sempre esattamente uno e la sorveglianza si riarma da sola. Con un
+  // flag, un frame mai consegnato - il browser puo' sospenderli, per esempio a
+  // scheda nascosta - avrebbe lasciato la sveglia bloccata per sempre.
+  function wake(ms) {
+    if (!world) return;
+    var until = performance.now() + (ms == null ? IDLE_GRACE_MS : ms);
+    if (until > awakeUntil) awakeUntil = until;
+    if (animPaused) { world.resumeAnimation(); animPaused = false; }
+    if (superviseRaf) cancelAnimationFrame(superviseRaf);
+    superviseRaf = requestAnimationFrame(supervise);
+  }
+
+  function supervise(t) {
+    superviseRaf = 0;
+    updateClipPlanes();
+    sampleFrame(t);
+    // Finche' il globo scorre per inerzia si continua a disegnare, senza
+    // bisogno di indovinare in anticipo quanto durera' la frenata.
+    if (cameraMoved() && t + 250 > awakeUntil) awakeUntil = t + 250;
+    if (t >= awakeUntil) {
+      animPaused = true;
+      lastFrameT = 0;
+      world.pauseAnimation();
+      return;
+    }
+    superviseRaf = requestAnimationFrame(supervise);
+  }
+
+  function wireWakeEvents(container) {
+    var on = function (target, type) {
+      target.addEventListener(type, function () { wake(); }, { passive: true, capture: true });
+    };
+    ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel',
+     'touchstart', 'touchmove', 'touchend'].forEach(function (type) {
+      on(container, type);
+    });
+    window.addEventListener('resize', function () { wake(); });
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { lastCamDist = -1; wake(); }
+    });
+  }
+
+  // ---------------------------------------------- risoluzione adattiva
+  //
+  // globe.gl parte a min(2, devicePixelRatio). Su un telefono con dpr 3 sono
+  // gia' 2,25 volte meno pixel del pannello, ma su una GPU del 2019 anche
+  // quello puo' non bastare: 720x1520 sono 1,1 milioni di frammenti per frame.
+  // Se il ritmo resta sotto i ~42 fps per un secondo intero si scende di un
+  // gradino, fino a 1. Non si risale mai: un su-e-giu' continuo si vedrebbe.
+  // Il testo non ne risente - i nomi dei paesi li disegna Compose, e la card
+  // del popup e' HTML in un CSS2DRenderer, non nel canvas WebGL.
+  var prSteps = [], prIdx = 0;
+  var lastFrameT = 0, frameCount = 0, slowCount = 0, warmup = 0;
+
+  function initPixelRatioSteps() {
+    // Il primo gradino e' quello che globe.gl imposta da solo: non si sale mai
+    // sopra, altrimenti su un desktop a dpr 1 si finirebbe per chiedere piu'
+    // pixel di quanti ne servono.
+    var base = Math.min(2, window.devicePixelRatio || 1);
+    var cand = [base, 1.5, 1.25, 1];
+    prSteps = [];
+    for (var i = 0; i < cand.length; i++) {
+      var v = cand[i];
+      if (v > base + 1e-6) continue;
+      if (prSteps.length && v > prSteps[prSteps.length - 1] - 0.05) continue;
+      prSteps.push(v);
+    }
+    if (!prSteps.length) prSteps = [base];
+    prIdx = 0;
+  }
+
+  function sampleFrame(t) {
+    if (prIdx >= prSteps.length - 1) return;     // gia' al minimo
+    if (warmup < 90) { warmup++; lastFrameT = t; return; }
+    if (lastFrameT) {
+      var dt = t - lastFrameT;
+      if (dt > 0 && dt < 500) {
+        frameCount++;
+        if (dt > 24) slowCount++;
+        if (frameCount >= 60) {
+          if (slowCount > 30) {
+            prIdx++;
+            try {
+              world.renderer().setPixelRatio(prSteps[prIdx]);
+              console.log('[BeenThere] risoluzione ridotta a ' + prSteps[prIdx] + 'x');
+            } catch (e) { console.warn('setPixelRatio', e); }
+          }
+          frameCount = 0; slowCount = 0;
+        }
+      }
+    }
+    lastFrameT = t;
   }
 
   // -------------------------------------------------- popup del paese scelto
@@ -534,7 +1161,6 @@
   // htmlElements di globe.gl tiene ancorata al centroide del paese e sposta a
   // ogni frame. Il toggle dentro la card e' l'unica via per marcare un
   // visitato partendo dal globo.
-  var POPUP_ALT = POLY_ALT + 0.01;     // appena sopra la calotta del paese
 
   function buildPopup(d) {
     var feat = byKey[d.key];
@@ -598,6 +1224,19 @@
     popupEls.toggle.setAttribute('aria-checked', visited.has(popupEls.key) ? 'true' : 'false');
   }
 
+  // Accendere il contorno del selezionato ora e' una sola istruzione: la
+  // geometria dei contorni e' gia' in scena, si sposta solo la finestra di
+  // disegno. Il paese non viene piu' sollevato - il sollevamento serviva a
+  // scavalcare i muri laterali dei vicini, che non esistono piu'.
+  function showOutline(key) {
+    if (!outlineMesh) return;
+    var fi = key == null ? null : idxOf[key];
+    var r = fi == null ? null : outlineRange[fi];
+    if (!r || !r.count) { outlineMesh.visible = false; return; }
+    outlineMesh.geometry.setDrawRange(r.start, r.count);
+    outlineMesh.visible = true;
+  }
+
   function selectCountry(key) {
     var f = byKey[key];
     if (!f || !world) return false;
@@ -605,7 +1244,8 @@
     selected = key;
     popupEls = null;                   // il layer ricostruira' l'elemento
     world.htmlElementsData([{ key: key, lat: focus.lat, lng: focus.lng }]);
-    repaint();                         // accende il confine del selezionato
+    showOutline(key);
+    wake();
     return true;
   }
 
@@ -615,7 +1255,8 @@
     popupEls = null;
     if (world) {
       world.htmlElementsData([]);
-      repaint();                       // spegne il confine
+      showOutline(null);
+      wake();
     }
   }
 
@@ -641,6 +1282,15 @@
     return !!(el && typeof el.closest === 'function' && el.closest('.pin'));
   }
 
+  /** Unico punto d'ingresso del tocco sul globo: paese o oceano. */
+  function handleGlobeClick(coords, ev) {
+    if (fromPopup(ev)) return;
+    var f = coords ? countryAt(coords.lat, coords.lng) : null;
+    if (!f) { clearSelection(); return; }
+    var key = countryKey(f);
+    if (key === selected) clearSelection(); else selectCountry(key);
+  }
+
   // -------------------------------------------------------- ponte con Kotlin
   function bridge() {
     return (typeof window.AndroidBridge !== 'undefined') ? window.AndroidBridge : null;
@@ -656,7 +1306,7 @@
     if (!byKey[key]) return;
     var now = !visited.has(key);
     if (now) visited.add(key); else visited.delete(key);
-    repaint();
+    repaintOne(key);
     updateCounter();
     refreshRowStates();
     refreshPopup();
@@ -714,7 +1364,11 @@
   function flyTo(key, ms) {
     var f = byKey[key];
     if (!f || !world) return false;
-    world.pointOfView(focusOf(f), ms == null ? 900 : ms);
+    var dur = ms == null ? 900 : ms;
+    // Il volo e' un'animazione: il ciclo di disegno deve restare acceso per
+    // tutta la sua durata, piu' l'inerzia che segue.
+    wake(dur + IDLE_GRACE_MS);
+    world.pointOfView(focusOf(f), dur);
     return true;
   }
 
@@ -800,6 +1454,7 @@
 
   // ---------------------------------------------------------------- avvio
   function initGlobe(geojson) {
+    var t0 = performance.now();
     features = (geojson.features || []).filter(function (f) { return f.geometry; });
     if (!features.length) { fail('Il GeoJSON non contiene feature.'); return; }
 
@@ -810,11 +1465,12 @@
     if (rewound) console.log('[BeenThere] poligoni riavvolti per d3-geo:', rewound);
 
     var seen = Object.create(null), collisions = [];
-    features.forEach(function (f) {
+    features.forEach(function (f, i) {
       var k = countryKey(f);
       if (seen[k]) collisions.push(k + ' -> ' + seen[k] + ' / ' + countryName(f));
       seen[k] = countryName(f);
       byKey[k] = f;
+      idxOf[k] = i;
     });
     if (collisions.length) {
       console.warn('[BeenThere] chiavi paese duplicate (si colorerebbero insieme):', collisions);
@@ -822,32 +1478,39 @@
     console.log('[BeenThere] paesi caricati:', features.length);
 
     buildSearchIndex();
+    buildPickIndex();
     loadDemo();
+    initPixelRatioSteps();
 
-    world = Globe()(document.getElementById('globe'))
+    var container = document.getElementById('globe');
+
+    world = Globe()(container)
       .backgroundColor(BG)
       .showAtmosphere(true)
       .atmosphereColor('#5b8fd6')
       .atmosphereAltitude(0.15)
       .polygonsData(features)
-      .polygonAltitude(function (f) { return polyAltitude(f); })
+      .polygonAltitude(CAP_ALT)
       // per paese, non uniforme: vedi il blocco su CAP_TARGET_PTS
       .polygonCapCurvatureResolution(function (f) { return capResolution(f); })
-      .polygonCapColor(function (f) { return capColor(f); })
-      .polygonSideColor(function () { return 'rgba(0,0,0,0)'; })
-      .polygonStrokeColor(function (f) { return strokeColor(f); })
+      .polygonCapColor(function () { return LAND; })
+      // false, non 'rgba(0,0,0,0)'. Nel layer poligoni di globe.gl 2.46.2 un
+      // colore di fianco falsy vale includeSides = false, quindi i muri
+      // laterali non vengono proprio costruiti. Prima erano trasparenti ma
+      // c'erano: invisibili e comunque scritti nel depth buffer, e lungo ogni
+      // frontiera i muri di due paesi arrivavano alla stessa quota. E' meta'
+      // della ragione per cui i confini si spezzavano.
+      .polygonSideColor(function () { return false; })
+      // false: nessun contorno per-paese. Li rimpiazza una rete unica e
+      // deduplicata (vedi buildBorderNetwork), che elimina i 2143 spigoli
+      // disegnati due volte.
+      .polygonStrokeColor(function () { return false; })
       .polygonsTransitionDuration(0)             // niente tween -> niente geometrie rigenerate
       // Il tocco non segna piu' il paese: lo seleziona e apre il popup, dove
       // il toggle e' esplicito. Toccare di nuovo lo stesso paese chiude.
-      .onPolygonClick(function (f, ev) {
-        if (!f || fromPopup(ev)) return;
-        var key = countryKey(f);
-        if (key === selected) clearSelection(); else selectCountry(key);
-      })
-      .onPolygonHover(function (f) { document.body.style.cursor = f ? 'pointer' : 'default'; })
-      // Un tocco sull'oceano chiude: i poligoni stanno sopra la sfera, quindi
-      // questo scatta solo quando il raycast non ha incontrato nessun paese.
-      .onGlobeClick(function (coords, ev) { if (!fromPopup(ev)) clearSelection(); })
+      // Non c'e' piu' onPolygonClick: le calotte sono una mesh sola e non
+      // rispondono al raggio, il paese lo decide countryAt() sulla lat/lng.
+      .onGlobeClick(handleGlobeClick)
       // Layer htmlElements: la card del popup. La posizione la aggiorna
       // globe.gl a ogni frame, e il modifier di visibilita' la fa sparire in
       // dissolvenza quando il paese passa dietro l'orizzonte del globo.
@@ -857,7 +1520,13 @@
       .htmlElement(function (d) { return buildPopup(d); })
       .htmlElementVisibilityModifier(function (el, isVisible) {
         el.classList.toggle('behind', !isVisible);
-      });
+      })
+      // Ogni movimento di camera (rotazione compresa: globe.gl aggancia questa
+      // callback all'evento change dei controlli) ristringe i piani di taglio.
+      // Non si chiama wake() qui: col damping acceso questo evento non smette
+      // mai del tutto di arrivare, e il ciclo non si addormenterebbe piu'. A
+      // tenerlo sveglio durante la frenata ci pensa cameraMoved().
+      .onZoom(function () { updateClipPlanes(); });
 
     // oceano
     try {
@@ -868,7 +1537,8 @@
     } catch (e) { console.warn('globeMaterial', e); }
 
     // Illuminazione quasi piatta: con la luce di default il lato in ombra
-    // falserebbe i colori richiesti (#8a8a8a / #ff8c1a).
+    // falserebbe i colori richiesti (#8a8a8a / #ff8c1a). Riguarda solo la sfera
+    // dell'oceano: le calotte usano un materiale non illuminato.
     try {
       (world.lights() || []).forEach(function (l) {
         if (l.isAmbientLight) l.intensity = 3.4;
@@ -879,9 +1549,11 @@
     try {
       var c = world.controls();
       c.enableDamping = true; c.dampingFactor = 0.12;
-      c.rotateSpeed = 0.6; c.zoomSpeed = 0.8;
       c.minDistance = 130; c.maxDistance = 700;   // limiti di zoom / pinch
       c.enablePan = false;
+      // rotateSpeed e zoomSpeed non si impostano qui: globe.gl li ricalcola
+      // dall'altitudine a ogni evento change dei controlli, quindi qualsiasi
+      // valore scritto adesso verrebbe sovrascritto al primo movimento.
     } catch (e) { console.warn('controls', e); }
 
     function resize() { world.width(window.innerWidth).height(window.innerHeight); }
@@ -889,9 +1561,32 @@
     resize();
     world.pointOfView({ lat: 25, lng: 10, altitude: 2.4 }, 0);
 
+    wireWakeEvents(container);
+    updateClipPlanes();
+
+    // Le calotte le tassella globe.gl, ma solo una volta: appena pronte
+    // vengono fuse e il layer poligoni viene smontato.
+    var want = expectedPolygonCount();
+    waitForPolygons(want, function (groups) {
+      try {
+        buildMergedScene(groups);
+      } catch (err) {
+        console.error('[BeenThere] fusione della scena fallita', err);
+        fail('Errore nella costruzione del globo &mdash; ' + err.message);
+        return;
+      }
+      finishStartup(t0);
+    }, function (got, expected) {
+      fail('Il globo non ha finito di costruirsi (' + got + '/' + expected + ' poligoni).');
+    });
+  }
+
+  function finishStartup(t0) {
     if (DEMO_UI) wireUi();
     updateCounter();
     statusEl.classList.add('hidden');
+    wake();
+    console.log('[BeenThere] avvio in ' + Math.round(performance.now() - t0) + ' ms');
 
     var b = bridge();
     if (b && typeof b.onGlobeReady === 'function') {
@@ -902,7 +1597,7 @@
   // ------------------------------------------------- API chiamata da Kotlin
   // (evaluateJavascript). Tutte idempotenti e sicure da chiamare più volte.
   window.BeenThere = {
-    ready: function () { return !!world; },
+    ready: function () { return !!capMesh; },
     // sostituisce integralmente lo stato: la sorgente di verità è DataStore
     setVisited: function (codes) {
       visited = new Set((codes || []).filter(function (k) { return !!byKey[k]; }));
@@ -911,7 +1606,7 @@
     setCountryVisited: function (code, isVisited) {
       if (!byKey[code]) return false;
       if (isVisited) visited.add(code); else visited.delete(code);
-      repaint(); updateCounter(); refreshRowStates(); refreshPopup();
+      repaintOne(code); updateCounter(); refreshRowStates(); refreshPopup();
       return true;
     },
     getVisited: function () { return JSON.stringify(Array.from(visited)); },
@@ -949,7 +1644,26 @@
     // Stesso payload di onGlobeReady, se Kotlin dovesse richiederlo.
     catalog: function () { return catalogJson(); },
     countryCount: function () { return features.length; },
-    setChromeVisible: function (v) { $('ui').hidden = !v; }
+    setChromeVisible: function (v) { $('ui').hidden = !v; },
+    /**
+     * Diagnostica del rendering, da leggere in chrome://inspect quando si vuole
+     * capire come sta andando sul telefono: oggetti disegnati, triangoli,
+     * risoluzione in uso e stato del ciclo di disegno.
+     */
+    perf: function () {
+      var info = null;
+      try { info = world.renderer().info; } catch (e) {}
+      return JSON.stringify({
+        pixelRatio: prSteps[prIdx],
+        pixelRatioSteps: prSteps,
+        drawCalls: info ? info.render.calls : null,
+        triangles: info ? info.render.triangles : null,
+        objectsInScene: info ? info.memory.geometries : null,
+        animating: !animPaused,
+        cameraNear: world ? world.camera().near : null,
+        cameraFar: world ? world.camera().far : null
+      });
+    }
   };
 
   // ------------------------------------------------------------ caricamento
