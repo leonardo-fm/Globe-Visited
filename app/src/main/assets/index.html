@@ -125,11 +125,73 @@
   .pin .tgl[aria-checked="true"] .sw { background: rgba(255,140,26,.32); }
   .pin .tgl[aria-checked="true"] .sw i { transform: translateX(14px); background: var(--visited); }
 
+  /* --- schermata di caricamento ------------------------------------------
+     Copre i secondi in cui il globo si costruisce. Il vincolo che detta tutto
+     il disegno qui sotto: la tassellatura BLOCCA il thread principale, quindi
+     si muove soltanto cio' che il compositor anima da se', cioe' transform e
+     opacity. Un'animazione su background-position, su un attributo SVG o
+     guidata da JS si inchioderebbe proprio mentre serve, e sembrerebbe che
+     l'app si sia piantata. */
   #status { position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
-            background: var(--bg); padding: 24px; text-align: center; font-size: 14px; line-height: 1.6; }
+            background: var(--bg); padding: 24px; text-align: center; font-size: 14px; line-height: 1.6;
+            transition: opacity .35s ease; }
+  #status.fading { opacity: 0; pointer-events: none; }
   #status.hidden { display: none; }
   #status code { background: #12121a; padding: 2px 6px; border-radius: 4px; color: #ffb066; }
   #status .err { color: #ff6b6b; font-weight: 600; }
+
+  #loader { display: grid; place-items: center; gap: 18px; }
+
+  /* Il globo di attesa. 104px non e' un numero a caso: i paralleli qui sotto
+     sono posizionati in pixel, perche' vanno spaziati come il seno della
+     latitudine e un gradiente non sa farlo in percentuale. Cambiando questa
+     misura vanno rifatti anche quelli. */
+  .wire { position: relative; width: 104px; height: 104px; border-radius: 50%;
+          overflow: hidden; border: 1px solid rgba(120,170,255,.30);
+          background: radial-gradient(circle at 34% 30%, #113059 0%, #0b1c38 58%, #071023 100%);
+          box-shadow: 0 0 28px rgba(91,143,214,.16); }
+
+  /* Meridiani. Una striscia piu' larga del cerchio che scorre verso sinistra:
+     dietro il ritaglio circolare legge come la sfera che gira. Trasla di
+     ESATTAMENTE un periodo del motivo (26px), quindi il ciclo si richiude su
+     se stesso e non si vede la giunta, qualunque sia la larghezza. */
+  .wire .merid { position: absolute; top: -6%; left: 0; width: 200%; height: 112%;
+                 background: repeating-linear-gradient(to right,
+                   transparent 0 14px, rgba(120,170,255,.42) 14px 15px);
+                 animation: wire-spin 1.7s linear infinite; }
+  @keyframes wire-spin { from { transform: translateX(0); } to { transform: translateX(-15px); } }
+
+  /* Paralleli, fermi: ruotando attorno all'asse polare non si muovono davvero.
+     Spaziati come sin(latitudine) - 0, +-30, +-60 gradi - ed e' questo, piu'
+     della sfumatura, a far leggere una sfera invece di un cilindro. */
+  .wire .par { position: absolute; inset: 0;
+               background: linear-gradient(to bottom,
+                 transparent 0 6px,   rgba(120,170,255,.34) 6px 7px,
+                 transparent 7px 25px,  rgba(120,170,255,.34) 25px 26px,
+                 transparent 26px 51px, rgba(120,170,255,.44) 51px 52px,
+                 transparent 52px 77px, rgba(120,170,255,.34) 77px 78px,
+                 transparent 78px 96px, rgba(120,170,255,.34) 96px 97px,
+                 transparent 97px); }
+
+  /* Volume, e soprattutto il trucco che regge tutta l'illusione. Su una sfera
+     vera i meridiani si stringono avvicinandosi al limbo; questi sono dritti e
+     paralleli, quindi proprio li' tradirebbero il cilindro. Le due sfumature
+     spengono il reticolo prima che ci arrivi: la radiale scurisce il bordo in
+     tutte le direzioni, quella orizzontale insiste su destra e sinistra, che
+     sono i lati dove l'occhio se ne accorgerebbe. */
+  .wire .shade { position: absolute; inset: 0; border-radius: 50%;
+                 background:
+                   linear-gradient(to right, rgba(7,16,35,.92) 0%, rgba(7,16,35,0) 26%,
+                                             rgba(7,16,35,0) 74%, rgba(7,16,35,.92) 100%),
+                   radial-gradient(circle at 50% 50%, transparent 26%, rgba(5,7,15,.46) 66%, rgba(5,7,15,.93) 100%),
+                   radial-gradient(circle at 33% 27%, rgba(150,190,255,.20), transparent 58%); }
+
+  #phase { font-size: 13px; color: #7b7b88; letter-spacing: .2px; }
+
+  /* Chi non vuole animazioni non le subisce nemmeno qui. */
+  @media (prefers-reduced-motion: reduce) {
+    .wire .merid { animation: none; }
+  }
 </style>
 </head>
 <body>
@@ -145,7 +207,16 @@
   </div>
 </div>
 
-<div id="status">Caricamento del globo…</div>
+<!-- Questo blocco e' HTML statico: viene dipinto appena il documento e' letto,
+     prima ancora che globe.gl.min.js venga eseguito. E' il motivo per cui il
+     globo di attesa compare subito e non dopo un secondo di schermo nero. -->
+<div id="status">
+  <div id="loader">
+    <div class="wire"><div class="merid"></div><div class="par"></div><div class="shade"></div></div>
+    <div id="phase">Carico i confini…</div>
+  </div>
+  <div id="oops" hidden></div>
+</div>
 
 <script src="globe.gl.min.js"></script>
 <script>
@@ -278,9 +349,21 @@
   var $ = function (id) { return document.getElementById(id); };
   var statusEl = $('status');
 
+  // L'errore spegne il globo di attesa e prende il suo posto. Prima scriveva in
+  // innerHTML su #status, che oggi cancellerebbe il wireframe: i due ruoli
+  // stanno in due elementi separati apposta.
   function fail(msg, hint) {
-    statusEl.classList.remove('hidden');
-    statusEl.innerHTML = '<div><div class="err">' + msg + '</div>' + (hint || '') + '</div>';
+    statusEl.classList.remove('hidden', 'fading');
+    var loader = $('loader');
+    if (loader) loader.hidden = true;
+    var oops = $('oops');
+    oops.hidden = false;
+    oops.innerHTML = '<div class="err">' + msg + '</div>' + (hint || '');
+  }
+
+  function setPhase(txt) {
+    var el = $('phase');
+    if (el) el.textContent = txt;
   }
 
   // --------------------------------------------------- identità di un paese
@@ -343,12 +426,19 @@
   // Qui servono le poche stringhe che la pagina disegna da se': il popup, che
   // si vede anche su Android, e la chrome HTML del prototipo browser.
   var STR = {
+    // Nota sulle due frasi di caricamento: a schermo sono sempre quelle
+    // italiane, perche' la lingua arriva da Kotlin con setLanguage() e quella
+    // chiamata segue onGlobeReady, cioe' quando la schermata e' gia' sparita.
+    // Stanno qui lo stesso, cosi' se un giorno la lingua venisse spinta prima
+    // funzionano senza altre modifiche.
     it: { visited: 'Visitato', visitedAria: 'Segna come visitato',
           countries: 'paesi', noResults: 'Nessun paese trovato.',
-          searchPh: 'Cerca un paese…' },
+          searchPh: 'Cerca un paese…',
+          loadingBorders: 'Carico i confini…', buildingGlobe: 'Costruisco il globo…' },
     en: { visited: 'Visited', visitedAria: 'Mark as visited',
           countries: 'countries', noResults: 'No country found.',
-          searchPh: 'Search a country…' }
+          searchPh: 'Search a country…',
+          loadingBorders: 'Loading borders…', buildingGlobe: 'Building the globe…' }
   };
   function t(key) { return (STR[lang] || STR.it)[key]; }
 
@@ -731,7 +821,11 @@
    * pronto. Si aspetta che tutti i gruppi esistano e abbiano una geometria.
    */
   function waitForPolygons(want, onReady, onTimeout) {
-    var deadline = performance.now() + 20000;
+    // Generosa: il controllo su "ready" precede quello sulla scadenza, quindi
+    // un blocco lungo non fa fallire niente. Serve solo a non restare appesi
+    // per sempre se il layer non costruisse mai, e con quattro volte i dati su
+    // un telefono lento venti secondi erano diventati stretti.
+    var deadline = performance.now() + 60000;
     (function poll() {
       var gs = polygonGroups();
       var ready = gs.length >= want;
@@ -1482,6 +1576,28 @@
     loadDemo();
     initPixelRatioSteps();
 
+    // Da qui in poi comanda la tassellatura, che blocca il thread per secondi.
+    // La frase va cambiata PRIMA, e le va lasciato il tempo di arrivare a
+    // schermo: due frame di respiro garantiscono che il disegno sia avvenuto,
+    // altrimenti si leggerebbe "Carico i confini" per tutta l'attesa.
+    setPhase(t('buildingGlobe'));
+    var started = false;
+    var go = function () {
+      if (started) return;
+      started = true;
+      buildGlobe(t0);
+    };
+    // Due frame di respiro danno la garanzia che il disegno sia avvenuto, ma
+    // non si puo' DIPENDERE da loro: un browser che non sta producendo frame -
+    // una WebView non ancora visibile, una scheda in background - non consegna
+    // requestAnimationFrame, e il globo non partirebbe mai. Il timeout e' la
+    // rete: se i frame arrivano si parte subito dopo il disegno, altrimenti si
+    // parte comunque.
+    requestAnimationFrame(function () { requestAnimationFrame(go); });
+    setTimeout(go, 250);
+  }
+
+  function buildGlobe(t0) {
     var container = document.getElementById('globe');
 
     world = Globe()(container)
@@ -1584,8 +1700,13 @@
   function finishStartup(t0) {
     if (DEMO_UI) wireUi();
     updateCounter();
-    statusEl.classList.add('hidden');
     wake();
+    // Dissolvenza invece di uno stacco netto: il globo emerge mentre il
+    // wireframe svanisce. Qui il thread e' di nuovo libero, quindi la
+    // transizione gira liscia. Il display:none arriva dopo, altrimenti
+    // taglierebbe la dissolvenza al primo fotogramma.
+    statusEl.classList.add('fading');
+    setTimeout(function () { statusEl.classList.add('hidden'); }, 420);
     console.log('[BeenThere] avvio in ' + Math.round(performance.now() - t0) + ' ms');
 
     var b = bridge();

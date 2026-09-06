@@ -40,12 +40,12 @@ android {
         buildConfig = true // serve per BuildConfig.DEBUG (debug della WebView)
     }
 
-    androidResources {
-        // Il GeoJSON e' gia' compatto: lasciarlo non compresso evita di
-        // decomprimerlo a ogni avvio, al prezzo di un APK piu' grande.
-        // Se preferisci l'APK piu' piccolo, togli questa riga.
-        noCompress += "geojson"
-    }
+    // Il GeoJSON viene compresso nell'APK. C'era un noCompress qui, e aveva
+    // senso finche' il file pesava 189 KB; ora che ne pesa 719 la compressione
+    // ne fa risparmiare circa mezzo mega, e la decompressione all'avvio costa
+    // qualche decina di millisecondi - invisibili accanto ai secondi di
+    // tassellatura del globo. WebViewAssetLoader serve gli asset compressi
+    // senza accorgersene.
 
     packaging {
         resources {

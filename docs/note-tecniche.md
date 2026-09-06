@@ -10,8 +10,10 @@ o prima di toccare il rendering. Il README resta corto apposta.
 ```
 curl -O https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson
 
-npx mapshaper ne_50m_admin_0_countries.geojson -filter-fields ISO_A3,ADM0_A3,ISO_A2,NAME,NAME_LONG,NAME_IT,ADMIN -simplify visvalingam 8% keep-shapes -clean -o format=geojson precision=0.01 countries.geojson
+npx mapshaper ne_50m_admin_0_countries.geojson -filter-fields ISO_A3,ADM0_A3,ISO_A2,NAME,NAME_LONG,NAME_IT,ADMIN -simplify visvalingam 40% keep-shapes -clean -o format=geojson precision=0.001 countries.geojson
 ```
+
+Ne escono **242 feature, 1359 poligoni, 41.128 vertici, 719 KB**.
 
 Perché il 50m e non il 110m: a 1:110m Malta, Singapore e Maldive **non esistono
 come poligoni**, quindi non sarebbero né cliccabili né cercabili. Restano fuori
@@ -19,8 +21,36 @@ anche dal 50m solo Vaticano, Monaco, San Marino, Liechtenstein, Andorra e alcune
 isole del Pacifico, presenti solo a 1:10m.
 
 `keep-shapes` impedisce che le isole minori spariscano nella semplificazione,
-`-clean` ripara le auto-intersezioni che la semplificazione introduce,
-`precision=0.01` (~1 km) taglia i decimali inutili.
+`-clean` ripara le auto-intersezioni che la semplificazione introduce.
+
+**Perché 40% e non 8%.** Fino al 2026-09-06 la semplificazione era all'8% con
+`precision=0.01`, e il risultato pesava 189 KB con 9.708 vertici. Quei due valori
+insieme buttavano via molto più di quanto sembrasse: il 50m grezzo ha **99.613
+vertici in 1.620 poligoni**, e la vecchia pipeline ne consegnava 470. I 1.150
+poligoni mancanti erano isole: `precision=0.01` vale ~1,1 km, e qualunque isola
+più piccola collassa in un anello degenere che poi sparisce. Con i parametri
+attuali i poligoni sono 1.359 — tornano arcipelaghi interi, per esempio le Hawaii
+passano da 2 a 7 isole, e Oahu esiste di nuovo.
+
+Il costo è tutto **all'avvio**, non per frame: la tassellatura è passata da ~0,85
+a ~2,0 secondi sul PC, mentre i triangoli sono cresciuti solo del 17% e le draw
+call sono rimaste quattro. È il motivo per cui esiste la schermata di
+caricamento.
+
+**Attenzione se si tocca `precision`.** La deduplica dei confini si aggancia
+all'uguaglianza *esatta* dei vertici condivisi (vedi *Un confine solo per
+frontiera*). Mapshaper preserva la topologia e applica lo snap in modo coerente
+sugli archi condivisi, quindi finora ha sempre retto — ma è una proprietà da
+**riverificare a ogni rigenerazione**, perché se si rompesse i confini
+tornerebbero a sfarfallare e il sintomo sembrerebbe scollegato dal dataset. Il
+controllo è: contare quante volte compare ogni spigolo, e pretendere che nessuno
+compaia più di due volte. Sui parametri attuali: 39.763 spigoli, 32.440 unici,
+**7.323 condivisi, zero con tre o più occorrenze**.
+
+Nota sui punti di prova: alzando la risoluzione la costa risolve i fiordi, quindi
+una **città sul mare** può legittimamente finire fuori dal poligono del suo paese
+(Nuuk passa da 7,7 a 2,0 km dal bordo, e ne esce). Per collaudare il tocco vanno
+usati punti **interni**, non capoluoghi costieri.
 
 I campi tenuti sono il minimo che serve. **Non aggiungere `ISO_A3_EH` o
 `SOV_A3`**: per le dipendenze contengono il codice dello stato sovrano, e usarli
@@ -43,7 +73,7 @@ e non è un dettaglio cosmetico. three-globe costruisce le calotte con
 `three-conic-polygon-geometry`, che si appoggia a **d3-geo**, e d3-geo usa la
 convenzione sferica **opposta a RFC 7946**: anello esterno in senso *orario*
 (area sferica con segno positiva), buchi in senso antiorario. Il dataset è
-RFC 7946, quindi tutti e 470 i poligoni avevano area d3 negativa e d3 li leggeva
+RFC 7946, quindi tutti i poligoni avevano area d3 negativa e d3 li leggeva
 come il **complemento** del paese. Da lì:
 
 1. `d3.geoBounds` di un poligono con area negativa restituisce l'intera sfera;
@@ -92,35 +122,41 @@ I due limiti sono misurati, non scelti a occhio:
 
 Paesi interi con ≤8 punti interni, al variare della regola: **49** con l'uniforme
 a 1 grado, **27** con l'uniforme a 0.5, **15** con questa regola, poi si risale a
-24 col minimo a 0.15 e a 45 col minimo a 0.05. Costo: 103.735 test
-punto-in-poligono all'avvio contro i 931 del default, una tantum. I 15 che
-restano sono territori minuscoli (Guam, Isola di Man, Åland, Fær Øer, Cipro,
-Lussemburgo, Brunei).
+24 col minimo a 0.15 e a 45 col minimo a 0.05. I 15 che restano sono territori
+minuscoli (Guam, Isola di Man, Åland, Fær Øer, Cipro, Lussemburgo, Brunei).
+Queste cifre dipendono dall'area dei poligoni, non dal dettaglio del contorno,
+quindi non cambiano rigenerando il dataset a risoluzione diversa.
+
+Il conto è migliaia di volte quello del default, ed è la voce che domina i ~2
+secondi di costruzione del globo. Si paga **una volta sola**: appena le calotte
+sono pronte vengono fuse e il layer poligoni viene smontato.
 
 Il valore è memoizzato sulla feature perché l'accessor viene rieseguito a ogni
 digest e un valore ballerino ritassellerebbe tutto. Oggi la tassellatura avviene
 comunque **una volta sola**: appena pronta, le calotte vengono fuse e il layer
 poligoni viene smontato.
 
-## Una scena sola invece di 940 oggetti
+## Una scena sola invece di migliaia di oggetti
 
 È la modifica che ha spostato il framerate. globe.gl disegna ogni poligono come
 un gruppo a sé, e un MultiPolygon ne produce uno per membro: i 242 paesi del
-dataset sono **470 poligoni**, cioè 470 mesh più 470 `LineSegments`, circa 1400
-draw call. Novecentoquaranta oggetti che three.js deve aggiornare, cullare e
-ordinare a ogni frame. Su una GPU del 2019 il collo di bottiglia non erano i
-triangoli — sono 118.510 in tutto, briciole — ma quel lavoro per-oggetto.
+dataset sono **1.359 poligoni**, cioè altrettante mesh più altrettanti
+`LineSegments`. Oltre 2.700 oggetti che three.js dovrebbe aggiornare, cullare e
+ordinare a ogni frame, per circa 4.000 draw call. Su una GPU del 2019 il collo di
+bottiglia non sono i triangoli — sono 138.971 in tutto, briciole — ma quel lavoro
+per-oggetto.
 
 C'era di peggio, e non si vedeva: globe.gl rilancia il **raycast del puntatore a
 ogni tick**, con un throttle di 50 ms, quindi venti volte al secondo anche a dito
-fermo, e quel raggio attraversava tutti e 940 gli oggetti. I `LineSegments` sono
-i più cari da provare, perché il test va fatto segmento per segmento.
+fermo, e quel raggio attraversava tutti gli oggetti. I `LineSegments` sono i più
+cari da provare, perché il test va fatto segmento per segmento.
 
 Ora il layer poligoni serve una volta sola, come fabbrica di geometrie: si
-prendono le calotte già tassellate, si fondono in **una** `BufferGeometry` con
-colore per-vertice, e `polygonsData([])` smonta i 940 oggetti. In scena restano
-la sfera dell'oceano, l'atmosfera, le calotte, la rete dei confini e il contorno
-del selezionato: **4 draw call** per frame, misurate.
+prendono le calotte già tassellate, si fondono in **una** `BufferGeometry` di
+93.489 vertici con colore per-vertice, e `polygonsData([])` smonta tutto il
+resto. In scena restano la sfera dell'oceano, l'atmosfera, le calotte, la rete
+dei confini e il contorno del selezionato: **4 draw call** per frame, misurate —
+e restano quattro qualunque sia la risoluzione del dataset.
 
 I costruttori di three non sono esportati dal bundle di globe.gl — anzi, il
 bundle guarda se `window.THREE` esiste per riusarlo, e non esiste — quindi
@@ -131,7 +167,7 @@ three-globe sono sottoclassi con costruttori che pretendono argomenti.
 **Ricolorare** non tocca più né geometria né scena: si riscrivono i float
 dell'attributo colore nell'intervallo di vertici di quel paese e si chiede un
 frame. Ogni feature ha il proprio `{ start, count }`, quindi segnare l'Italia non
-sfiora la Francia. Prima ogni toggle rientrava nel digest di globe.gl su 470
+sfiora la Francia. Prima ogni toggle rientrava nel digest di globe.gl su tutti i
 gruppi.
 
 I colori per-vertice three.js li usa **in spazio lineare** così come sono, mentre
@@ -148,22 +184,24 @@ sospettato è `CAP_SIDE`: rimetterlo a `2` (DoubleSide) le fa tornare.
 ## Un confine solo per frontiera
 
 Prima ogni paese portava il proprio contorno, e lungo una frontiera il contorno
-di A e quello di B erano geometrie **coincidenti**. Non è una stima: sui 9235
-spigoli del dataset, **2143 comparivano esattamente due volte** — e mai tre, il
+di A e quello di B erano geometrie **coincidenti**. Non è una stima: sui 39.763
+spigoli del dataset, **7.323 compaiono esattamente due volte** — e mai tre, il
 che dice che la topologia è condivisa e i due spigoli hanno gli stessi identici
 vertici. Mapshaper la preserva, quindi una chiave canonica sui due estremi li
-riconosce senza tolleranze geometriche.
+riconosce senza tolleranze geometriche. È una proprietà da riverificare a ogni
+rigenerazione del dataset: vedi l'avvertenza in *Il dataset*.
 
 Oggi i confini sono **una sola** `LineSegments` per tutto il pianeta, costruita
-deduplicando gli spigoli: 7548 segmenti, 177 KB, una draw call. Il contorno del
-paese selezionato è una seconda geometria che contiene i contorni di tutti i
-paesi con i vertici di ognuno contigui: accenderne uno costa un `setDrawRange`,
-senza costruire o buttare niente a ogni selezione.
+deduplicando gli spigoli: 32.444 segmenti, circa 760 KB di vertici, una draw
+call. Il contorno del paese selezionato è una seconda geometria che contiene i
+contorni di tutti i paesi con i vertici di ognuno contigui: accenderne uno costa
+un `setDrawRange`, senza costruire o buttare niente a ogni selezione.
 
 Gli spigoli vengono suddivisi a passi di 1,5 gradi perché la linea segua la
-curvatura invece di tagliare una corda che sprofonda nella sfera. Costa poco: lo
-spigolo più lungo del dataset misura 5,65 gradi, quindi 7092 spigoli unici
-diventano 7548 segmenti. L'unico caso da scartare a mano è lo spigolo di chiusura
+curvatura invece di tagliare una corda che sprofonda nella sfera. Costa quasi
+nulla: lo spigolo più lungo del dataset misura 5,65 gradi, quindi 32.440 spigoli
+unici diventano 32.444 segmenti. L'unico caso da scartare a mano è quello di
+chiusura
 dell'Antartide, da `(-180,-90)` a `(180,-90)`: i due estremi sono lo stesso punto
 sulla sfera, il polo sud, ma interpolarli in lat/lng farebbe il giro del mondo.
 
@@ -216,8 +254,8 @@ corrisponde più a un singolo paese. Quindi calotte, confini e alone
 dell'atmosfera vengono esclusi dal raycast (`restrictRaycast()`), e l'unico
 bersaglio resta la sfera del globo: `onGlobeClick` fornisce la lat/lng, e il
 paese lo decide un **point-in-polygon** sul GeoJSON, con un indice a griglia da 5
-gradi. 1588 celle occupate, al massimo 11 poligoni candidati per cella, mezzo
-microsecondo a tocco.
+gradi. 1.619 celle occupate su 2.592, al massimo 25 poligoni candidati per
+cella, mezzo microsecondo a tocco.
 
 È anche più esatto del raycast, perché prova la sagoma vera invece della sua
 triangolazione. L'unico scarto è la parallasse fra sfera e calotta, che sta 0,2
@@ -270,6 +308,48 @@ di taglio: è la via per controllare come sta andando sul telefono da
 ricalcola dall'altitudine a ogni evento `change` dei controlli, quindi qualsiasi
 valore scritto all'avvio viene sovrascritto al primo movimento. `minDistance`,
 `maxDistance`, `enablePan` e il damping invece restano.
+
+## La schermata di caricamento
+
+Copre i ~2 secondi in cui il globo si costruisce. Tutto il suo disegno discende
+da un unico vincolo: **la tassellatura blocca il thread principale**, quindi si
+muove soltanto ciò che il compositor anima da sé, cioè `transform` e `opacity`.
+Un'animazione su `background-position`, su un attributo SVG o guidata da JS si
+inchioderebbe proprio mentre serve, e l'app sembrerebbe piantata.
+
+Da lì tre scelte:
+
+- il globo di attesa è **HTML statico** nel documento, quindi viene dipinto prima
+  ancora che `globe.gl.min.js` venga eseguito: niente schermo nero iniziale;
+- i **meridiani** sono una striscia con un motivo ripetuto che scorre. Trasla di
+  esattamente un periodo del motivo (15px), così il ciclo si richiude su sé
+  stesso e la giunta non si vede, qualunque sia la larghezza dell'elemento;
+- i **paralleli** stanno fermi — ruotando attorno all'asse polare non si muovono
+  davvero — e sono spaziati come `sin(latitudine)`, cioè 0, ±30, ±60 gradi. Sono
+  loro, più della sfumatura, a far leggere una sfera invece di un cilindro.
+
+Il trucco che regge l'illusione è la sfumatura sopra il reticolo. Su una sfera
+vera i meridiani si stringono avvicinandosi al limbo; questi sono dritti e
+paralleli, quindi proprio lì tradirebbero il cilindro. Due gradienti li spengono
+prima che ci arrivino: uno radiale che scurisce il bordo in tutte le direzioni, e
+uno orizzontale che insiste su destra e sinistra, i lati dove l'occhio se ne
+accorgerebbe. Si è evitata una `mask` apposta: applicata a un antenato può far
+uscire l'animazione del figlio dal percorso composito, che è esattamente ciò che
+non deve succedere qui.
+
+**Le due frasi di fase** (`Carico i confini…`, `Costruisco il globo…`) sono solo
+due, e non c'è nessuna percentuale: la tassellatura è un blocco opaco dentro il
+digest di globe.gl, e inventare un avanzamento sarebbe finto. La seconda frase va
+scritta *prima* che il blocco cominci, e le va lasciato il tempo di arrivare a
+schermo — due `requestAnimationFrame` di respiro. Ma non ci si può **dipendere**:
+un browser che non sta producendo frame (una WebView non ancora visibile, una
+scheda in background) non consegna `requestAnimationFrame`, e il globo non
+partirebbe mai. Accanto c'è un `setTimeout` di 250 ms come rete: se i frame
+arrivano si parte subito dopo il disegno, altrimenti si parte comunque.
+
+`fail()` scrive in un elemento separato e spegne il globo di attesa. Prima
+scriveva in `innerHTML` su `#status`, che oggi cancellerebbe il wireframe: i due
+ruoli stanno in due elementi distinti apposta.
 
 ## Il popup del paese
 

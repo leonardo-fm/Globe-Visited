@@ -1,4 +1,5 @@
-- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — l'app gira sul telefono; il rendering è stato riscritto il 2026-09-06 ma non è ancora stato provato sull'S10e
+- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — rendering riscritto e confermato sull'S10e; poi dataset a risoluzione più alta e schermata di caricamento, questi ancora da provare sul telefono
+- [Le diagnosi dell'utente sono buone ma parziali](diagnosi-utente-parziali.md) — segnala il difetto con una causa già abbozzata: va presa sul serio e verificata fino in fondo
 - [Provare index.html con Chrome](verifica-della-pagina-con-chrome.md) — l'estensione non c'è: Chrome headless da riga di comando, e perché il ciclo di disegno va provato con un Chrome vero
 - [Decisioni di prodotto di Been There](been-there-decisioni-prodotto.md) — dataset 50m, tocco = selezione + popup, bandiere emoji, lingua manuale: concordate, non ridiscuterle
 - [L'utente vuole i compromessi espliciti](utente-vuole-compromessi-espliciti.md) — prima domande e requisiti, poi codice; niente scelte silenziose

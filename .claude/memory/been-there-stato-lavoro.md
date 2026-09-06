@@ -21,12 +21,21 @@ ogni movimento di camera, disegno su richiesta e risoluzione adattiva. Da ~1400
 draw call a **4**. Il perche' di ogni scelta sta in `docs/note-tecniche.md` — non
 riassumerlo qui, e' li' che va letto prima di toccare il rendering.
 
-**Non verificato sul telefono.** Le prove sono state fatte con Chrome sul PC
-(vedi [[verifica-della-pagina-con-chrome]]): geometria, tocco, colori, contorni,
-piani di taglio e ciclo di disegno passano, ma i numeri di framerate sull'S10e
-li puo' dare solo l'utente. Se qualcosa non torna, i due sospettati indicati
-nelle note sono `CAP_SIDE` (le calotte spariscono) e la soglia di
-`sampleFrame()` (la risoluzione scende quando non dovrebbe).
+**Confermato dall'utente sul suo Samsung S10e il 2026-09-06**: framerate e
+confini a posto, "funziona tutto". Le prove automatiche erano state fatte con
+Chrome sul PC (vedi [[verifica-della-pagina-con-chrome]]).
+
+**2026-09-06, secondo giro: alzata la risoluzione del dataset** a
+`simplify 40% / precision 0.001`. Vertici da 9.708 a 41.128, poligoni da 470 a
+1.359 (tornano gli arcipelaghi: le Hawaii passano da 2 a 7 isole). Zero modifiche
+al codice di rendering: deduplica, tassellatura, tocco e contorni si dimensionano
+sul file. Aggiunta una schermata di caricamento con globo wireframe, perche' la
+costruzione e' passata da ~0,85 a ~2,0 secondi sul PC. Tolto `noCompress` dal
+geojson. Il denominatore del contatore resta 242, quindi nessuna decisione di
+prodotto e' stata riaperta.
+
+Non provato sul telefono: mancano il tempo di avvio reale sull'S10e e la conferma
+che il wireframe continui a girare mentre il thread e' bloccato.
 
 L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.
 La verifica possibile da questa macchina resta quella descritta in

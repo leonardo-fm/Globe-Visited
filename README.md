@@ -62,11 +62,15 @@ la UI Compose. A globo pronto il JavaScript passa a Kotlin l'intero catalogo dei
 paesi in una chiamata sola, e da lì la ricerca è tutta nativa. La verità sui
 visitati sta in DataStore, mai nella WebView.
 
-globe.gl serve solo a costruire la geometria, una volta sola: all'avvio le 470
+globe.gl serve solo a costruire la geometria, una volta sola: all'avvio le 1.359
 calotte vengono fuse in un'unica mesh e i confini in un'unica linea, con ogni
 frontiera disegnata una volta invece di due. Il pianeta intero costa **4 draw
 call** per frame, il ciclo di disegno si ferma a globo fermo e la risoluzione
 scende da sola se il telefono non tiene il passo.
+
+Costruirlo richiede un paio di secondi, e nel frattempo si vede un globo
+wireframe che gira. È animato solo con `transform`, perché la tassellatura blocca
+il thread principale e solo il compositor continua a muovere qualcosa.
 
 ## Gli asset
 
@@ -76,7 +80,7 @@ loro l'app non parte e non c'è rete da cui prenderli:
 | file | cos'è |
 |---|---|
 | `globe.gl.min.js` | globe.gl 2.46.2, build UMD con three incluso, 1,8 MB |
-| `countries.geojson` | Natural Earth 1:50m semplificato, 242 paesi, 193 KB |
+| `countries.geojson` | Natural Earth 1:50m semplificato, 242 paesi in 1.359 poligoni, 719 KB (compresso nell'APK) |
 | `TwemojiCountryFlags.woff2` | font con i soli glifi delle bandiere, 78 KB, MIT |
 
 ## Note tecniche
