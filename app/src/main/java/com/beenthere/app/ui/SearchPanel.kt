@@ -75,6 +75,7 @@ fun SearchPanel(
     onSelectPlace: (Place) -> Unit,
     onToggle: (Country) -> Unit,
     onTogglePlace: (Place) -> Unit,
+    onCreatePlace: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -148,12 +149,30 @@ fun SearchPanel(
                     .border(1.dp, BorderGray, shape)
             ) {
                 if (results.isEmpty() && placeResults.isEmpty()) {
-                    Text(
-                        text = appString(R.string.search_no_results),
-                        color = OnPanelMuted,
-                        fontSize = 14.sp,
-                        modifier = Modifier.padding(16.dp)
-                    )
+                    // Se qui non esce niente, quel posto in catalogo non c'e':
+                    // la via d'uscita e' crearlo a mano, e va offerta proprio
+                    // qui, dove ci si accorge che manca.
+                    Column(Modifier.padding(16.dp)) {
+                        Text(
+                            text = appString(R.string.search_no_results),
+                            color = OnPanelMuted,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = appString(R.string.place_create_here),
+                            color = OnPanel,
+                            fontSize = 14.sp,
+                            modifier = Modifier
+                                .padding(top = 12.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, BorderGray, RoundedCornerShape(10.dp))
+                                .clickable {
+                                    onCreatePlace()
+                                    keyboard?.hide()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
                 } else {
                     LazyColumn(Modifier.heightIn(max = 320.dp)) {
                         items(results, key = { "c:" + it.code }) { country ->

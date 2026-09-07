@@ -30,6 +30,7 @@ import com.beenthere.app.MainViewModel
 import com.beenthere.app.globe.GlobeBridge
 import com.beenthere.app.globe.GlobeController
 import com.beenthere.app.globe.GlobeWebView
+import com.beenthere.app.data.PlaceCatalog
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,7 +43,8 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
         GlobeBridge(
             onReady = viewModel::onGlobeReady,
             onToggled = viewModel::onGlobeToggled,
-            onRemovePlace = viewModel::onPlaceRemoved
+            onRemovePlace = viewModel::onPlaceRemoved,
+            onRequestPlace = viewModel::onPlaceRequested
         )
     }
 
@@ -72,10 +74,17 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     val results = remember(query, state.catalog, state.language) {
         state.catalog.search(query, state.language)
     }
-    val placeResults = remember(query, state.placeCatalog, state.language) {
-        state.placeCatalog.search(query, state.language)
+    // I pin creati a mano non stanno in cities.json: si cercano fra i luoghi
+    // dell'utente e vanno per primi. Senza, un pin piantato per sbaglio in
+    // mezzo al Pacifico non si ritroverebbe piu'.
+    val placeResults = remember(query, state.placeCatalog, state.language, state.places) {
+        val mine = PlaceCatalog.searchAmong(
+            state.places.filter { it.custom }, query, state.language
+        )
+        (mine + state.placeCatalog.search(query, state.language)).distinctBy { it.id }
     }
     val pinnedPlaces = remember(state.places) { state.placeIds }
+    val draft by viewModel.draft.collectAsStateWithLifecycle()
 
     ProvideAppLanguage(state.language) {
         Box(Modifier.fillMaxSize()) {
@@ -127,7 +136,29 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                         query = ""
                     },
                     onToggle = { country -> viewModel.toggleVisited(country.code) },
-                    onTogglePlace = { place -> viewModel.togglePlace(place) }
+                    onTogglePlace = { place -> viewModel.togglePlace(place) },
+                    onCreatePlace = { viewModel.startPlaceDraft(query.trim()) }
+                )
+            }
+
+            draft?.let { current ->
+                AddPlaceDialog(
+                    draft = current,
+                    onDismiss = viewModel::cancelPlaceDraft,
+                    onConfirm = { name, lat, lng ->
+                        if (current.lat == lat && current.lng == lng) {
+                            // Coordinate non toccate: il paese lo sa gia' il
+                            // JavaScript, che le ha calcolate sotto il dito.
+                            viewModel.createPlace(name, lat, lng, current.countryCode)
+                        } else {
+                            // Scritte o corrette a mano: il point-in-polygon vive
+                            // nel globo, quindi glielo si chiede.
+                            controller.resolveCountry(lat, lng) { code ->
+                                viewModel.createPlace(name, lat, lng, code)
+                            }
+                        }
+                        query = ""
+                    }
                 )
             }
 

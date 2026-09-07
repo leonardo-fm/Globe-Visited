@@ -200,6 +200,56 @@ nuova** (`places`, un array JSON), non dentro `visited_countries`. Aggiungere i
 luoghi non poteva quindi rovinare i paesi gia' salvati, e non serviva nessuna
 migrazione.
 
+### I pin a mano
+
+Un luogo che in `cities.json` non c'e' si pianta **tenendo premuto sul globo**,
+oppure si scrive dalla ricerca quando non trova niente - stesso dialogo, cambia
+solo cosa e' gia' compilato.
+
+globe.gl non ha un evento di pressione lunga, e un timer sul `pointerdown` da
+solo non basta: sul globo il gesto normale e' trascinare per ruotare, e con due
+dita si zooma. Il rilevatore quindi annulla in tre casi, e sono tutti e tre
+necessari:
+
+- il dito si sposta oltre **10 px** (sta ruotando, non premendo);
+- arriva un **secondo dito** (`isPrimary` falso): senza questo, una pinch
+  aprirebbe il dialogo mentre si sta zoomando;
+- `pointerup`, `pointercancel`, `pointerleave` o `wheel`.
+
+Due dettagli che si scoprono solo provando: dopo che la pressione lunga e'
+scattata arriva **comunque** il `pointerup`, e globe.gl lo tratterebbe come un
+click selezionando il paese sotto - da qui `swallowNextClick`, che ne scarta uno
+e uno solo. E premendo fuori dal globo `toGlobeCoords` non restituisce niente:
+premere sul cielo non deve creare un luogo a caso.
+
+**Il pin non nasce nel JavaScript.** La pressione lunga chiama
+`onPlaceRequested(lat, lng, chiavePaese)` e si ferma li': il nome lo chiede
+Compose e il luogo lo scrive DataStore, perche' la verita' non sta mai nella
+WebView. La chiave del paese viaggia insieme alle coordinate proprio per non
+doverla richiedere dopo.
+
+Quando invece le coordinate le scrive l'utente, il paese non lo sa nessuno: li'
+Compose interroga il globo con `BeenThere.countryAt()` attraverso
+`resolveCountry`, che e' l'unico punto di tutta l'app in cui Kotlin **chiede**
+qualcosa alla pagina invece di comandarla, e l'unico uso di `evaluateJavascript`
+con callback. Vale la pena perche' il point-in-polygon vive li' e duplicarlo in
+Kotlin significherebbe tenerne due allineati.
+
+**Le coordinate si incollano intere.** Il campo accetta `41.9028, 12.4964` in un
+colpo solo, separatori intorno compresi, e in seconda battuta anche la virgola
+come decimale (`41,9 12,5`). Non e' un vezzo: l'app non ha rete, quindi le
+coordinate arrivano per forza copiate da un'altra app, e obbligare a spezzarle in
+due caselle renderebbe questa strada inservibile. Fuori intervallo si rifiuta.
+
+Il parsing esiste in due copie, Kotlin e JavaScript, per la stessa ragione della
+ricerca: il prototipo browser deve restare provabile per intero. La copia
+sacrificabile e' quella JavaScript.
+
+**Cosa manca ancora:** un pin creato a mano non si modifica, si cancella e si
+rifa. La lista non ha ancora una sezione per i luoghi, quindi la via per
+ritrovarne uno e' la ricerca, che infatti guarda anche fra i pin dell'utente -
+altrimenti uno piantato per sbaglio in mezzo al Pacifico non si ritroverebbe.
+
 ## Verso degli anelli del GeoJSON
 
 All'avvio `index.html` riavvolge in place i poligoni prima di passarli al globo,

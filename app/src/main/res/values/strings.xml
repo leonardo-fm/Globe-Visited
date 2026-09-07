@@ -17,4 +17,14 @@
     <string name="mark_place">Metti sul globo</string>
     <string name="unmark_place">Togli dal globo</string>
 
+    <string name="place_new_title">Nuovo luogo</string>
+    <string name="place_name">Nome</string>
+    <string name="place_name_hint">Casa dei nonni</string>
+    <string name="place_coords">Coordinate</string>
+    <string name="place_coords_hint">41.9028, 12.4964</string>
+    <string name="place_coords_invalid">Servono un nome e due coordinate valide (lat da -90 a 90, lng da -180 a 180).</string>
+    <string name="place_create">Crea</string>
+    <string name="place_create_here">Crea un luogo…</string>
+    <string name="cancel">Annulla</string>
+
 </resources>

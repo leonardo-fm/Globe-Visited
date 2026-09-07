@@ -65,6 +65,28 @@
   .row.city.on .tg i { background: #e8e8ee; }
   .row.city.on .tg { border-color: #6d6d7a; }
   .empty { padding: 12px; font-size: 13px; color: #7b7b88; }
+  .empty .mk { display: block; margin-top: 10px; font: inherit; font-size: 13px;
+               color: #e8e8ee; background: #12121a; border: 1px solid #2b2b36;
+               border-radius: 10px; padding: 7px 10px; cursor: pointer; }
+
+  /* Dialogo "nuovo luogo", solo prototipo browser. */
+  #newPlace { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
+              background: rgba(3,5,10,.6); backdrop-filter: blur(2px); }
+  #newPlace .box { width: min(340px, 88vw); background: rgba(9,12,22,.98);
+                   border: 1px solid #2b2b36; border-radius: 16px; padding: 16px;
+                   box-shadow: 0 18px 50px rgba(0,0,0,.6); }
+  #newPlace .ttl { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+  #newPlace label { display: block; font-size: 11px; color: #8e8e9c; margin-bottom: 10px; }
+  #newPlace input { display: block; width: 100%; box-sizing: border-box; margin-top: 4px;
+                    font: inherit; font-size: 14px; color: #e8e8ee; background: #12121a;
+                    border: 1px solid #2b2b36; border-radius: 10px; padding: 8px 10px; }
+  #newPlace input:focus { outline: none; border-color: var(--visited); }
+  #newPlace .err { font-size: 12px; color: #ff8c1a; margin: -4px 0 10px; }
+  #newPlace .btns { display: flex; gap: 8px; justify-content: flex-end; }
+  #newPlace button { font: inherit; font-size: 13px; color: #e8e8ee; background: #12121a;
+                     border: 1px solid #2b2b36; border-radius: 10px; padding: 7px 12px;
+                     cursor: pointer; }
+  #newPlace button.primary { border-color: var(--visited); color: var(--visited); }
   /* Citta' nella ricerca di prova: su Android questa lista non esiste, la
      disegna Compose. Il paese sta sotto il nome invece che di fianco perche'
      "Stati Uniti d'America" accanto a "New York" litiga per la larghezza. */
@@ -223,6 +245,23 @@
     <input id="search" type="search" autocomplete="off" autocorrect="off" autocapitalize="off"
            spellcheck="false" placeholder="Cerca un paese…">
     <div id="results"></div>
+  </div>
+</div>
+
+<!-- Dialogo "nuovo luogo" del solo prototipo browser: su Android non si apre
+     mai, perche' requestNewPlace() passa dal ponte e il dialogo lo disegna
+     Compose. Resta nascosto finche' non lo apre openNewPlaceDialog(). -->
+<div id="newPlace" hidden>
+  <div class="box">
+    <div class="ttl">Nuovo luogo</div>
+    <label>Nome<input id="npName" type="text" autocomplete="off" placeholder="Casa dei nonni"></label>
+    <label>Coordinate<input id="npCoords" type="text" autocomplete="off"
+                            placeholder="41.9028, 12.4964"></label>
+    <div class="err" id="npErr" hidden></div>
+    <div class="btns">
+      <button type="button" id="npCancel">Annulla</button>
+      <button type="button" id="npOk" class="primary">Crea</button>
+    </div>
   </div>
 </div>
 
@@ -496,11 +535,19 @@
           countries: 'paesi', noResults: 'Nessun risultato.',
           cities: 'Città', searchPh: 'Cerca un paese o una città…',
           remove: 'Rimuovi', placeAria: 'Metti sul globo',
+          newPlace: 'Nuovo luogo', name: 'Nome', coords: 'Coordinate',
+          create: 'Crea', cancel: 'Annulla',
+          makePlace: 'Crea un luogo qui…',
+          badName: 'Serve un nome.', badCoords: 'Coordinate non valide (lat da -90 a 90, lng da -180 a 180).',
           loadingBorders: 'Carico i confini…', buildingGlobe: 'Costruisco il globo…' },
     en: { visited: 'Visited', visitedAria: 'Mark as visited',
           countries: 'countries', noResults: 'No results.',
           cities: 'Cities', searchPh: 'Search a country or city…',
           remove: 'Remove', placeAria: 'Put on the globe',
+          newPlace: 'New place', name: 'Name', coords: 'Coordinates',
+          create: 'Create', cancel: 'Cancel',
+          makePlace: 'Create a place…',
+          badName: 'A name is required.', badCoords: 'Invalid coordinates (lat -90..90, lng -180..180).',
           loadingBorders: 'Loading borders…', buildingGlobe: 'Building the globe…' }
   };
   function t(key) { return (STR[lang] || STR.it)[key]; }
@@ -1481,6 +1528,104 @@
     refreshPopup();
   }
 
+  // ------------------------------------------- pin a mano: la pressione lunga
+  //
+  // globe.gl non ha un evento di pressione lunga, e non basta un timer sul
+  // pointerdown: sul globo il gesto normale e' trascinare per ruotare, e con
+  // due dita si zooma. Quindi si annulla quando il dito si sposta oltre la
+  // soglia e quando arriva un secondo dito (`isPrimary` falso), altrimenti una
+  // pinch aprirebbe il dialogo mentre si sta zoomando.
+  var LONG_PRESS_MS = 500;
+  var LONG_PRESS_SLOP = 10;          // px di tolleranza: il dito non sta mai fermo
+  var lpTimer = 0, lpX = 0, lpY = 0;
+
+  // Dopo una pressione lunga arriva comunque il pointerup, e globe.gl lo
+  // tratterebbe come un click selezionando il paese sotto. Si scarta quello e
+  // uno solo.
+  var swallowNextClick = false;
+
+  function cancelLongPress() {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
+  }
+
+  function fireLongPress() {
+    lpTimer = 0;
+    if (!world) return;
+    var canvas;
+    try { canvas = world.renderer().domElement; } catch (e) { return; }
+    var rect = canvas.getBoundingClientRect();
+    // Fuori dal globo toGlobeCoords non restituisce niente: premere sul cielo
+    // non deve creare un luogo a caso.
+    var c = world.toGlobeCoords(lpX - rect.left, lpY - rect.top);
+    if (!c) return;
+    swallowNextClick = true;
+    var f = countryAt(c.lat, c.lng);
+    requestNewPlace(c.lat, c.lng, f ? countryKey(f) : '');
+  }
+
+  function wireLongPress(container) {
+    container.addEventListener('pointerdown', function (ev) {
+      cancelLongPress();
+      swallowNextClick = false;
+      // Secondo dito, tasto destro, o tocco atterrato dentro una card: niente.
+      if (!ev.isPrimary) return;
+      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      if (fromPopup(ev)) return;
+      lpX = ev.clientX; lpY = ev.clientY;
+      lpTimer = setTimeout(fireLongPress, LONG_PRESS_MS);
+    }, { passive: true, capture: true });
+
+    container.addEventListener('pointermove', function (ev) {
+      if (!lpTimer) return;
+      var dx = ev.clientX - lpX, dy = ev.clientY - lpY;
+      if (dx * dx + dy * dy > LONG_PRESS_SLOP * LONG_PRESS_SLOP) cancelLongPress();
+    }, { passive: true, capture: true });
+
+    ['pointerup', 'pointercancel', 'pointerleave', 'wheel'].forEach(function (type) {
+      container.addEventListener(type, cancelLongPress, { passive: true, capture: true });
+    });
+  }
+
+  /** Su Android il nome lo chiede Compose; nel browser il dialogo qui sotto. */
+  function requestNewPlace(lat, lng, countryKeyOrEmpty) {
+    var b = bridge();
+    if (b && typeof b.onPlaceRequested === 'function') {
+      try { b.onPlaceRequested(lat, lng, countryKeyOrEmpty || ''); }
+      catch (e) { console.warn('bridge', e); }
+      return;
+    }
+    openNewPlaceDialog(lat, lng);
+  }
+
+  /**
+   * Coordinate scritte a mano. Si accetta la stringa **intera** incollata da
+   * un'altra app - "41.9028, 12.4964" - perche' senza rete e' da li' che
+   * arrivano, e obbligare a spezzarle in due caselle renderebbe la funzione
+   * inservibile. Si accetta anche la virgola come separatore decimale, purche'
+   * i due numeri restino distinguibili.
+   */
+  function parseCoords(text) {
+    var s = String(text || '').trim();
+    if (!s) return null;
+    // Prima si prova col punto decimale e un separatore qualsiasi fra i due
+    // numeri; poi il caso "41,9028 12,4964", dove la virgola e' decimale.
+    var nums = s.match(/-?\d+(?:\.\d+)?/g);
+    if (!nums || nums.length !== 2) {
+      var alt = s.replace(/,/g, '.').match(/-?\d+(?:\.\d+)?/g);
+      if (!alt || alt.length !== 2) return null;
+      nums = alt;
+    }
+    var lat = parseFloat(nums[0]), lng = parseFloat(nums[1]);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return { lat: lat, lng: lng };
+  }
+
+  /** Id di un luogo creato a mano: non deve collidere con quelli del catalogo. */
+  function newPlaceId() {
+    return 'u:' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  }
+
   // -------------------------------------------------- popup del paese scelto
   // Un tocco sul globo non segna piu' niente: apre questa card, che il layer
   // htmlElements di globe.gl tiene ancorata al centroide del paese e sposta a
@@ -1678,6 +1823,8 @@
    */
   function handleGlobeClick(coords, ev) {
     if (fromPopup(ev)) return;
+    // Il pointerup che chiude una pressione lunga non deve anche selezionare.
+    if (swallowNextClick) { swallowNextClick = false; return; }
 
     var pl = placeAtPointer(ev);
     if (pl) {
@@ -1909,7 +2056,12 @@
     selIdx = lastResults.length ? 0 : -1;
 
     if (!lastResults.length) {
-      resultsEl.innerHTML = '<div class="empty">' + escapeHtml(t('noResults')) + '</div>';
+      // Se la ricerca non trova niente, quel posto non e' in catalogo: la via
+      // d'uscita e' crearlo a mano, e va offerta qui, dove ci si accorge che
+      // manca.
+      resultsEl.innerHTML = '<div class="empty">' + escapeHtml(t('noResults')) +
+        '<button type="button" class="mk" id="mkPlace">' + escapeHtml(t('makePlace')) +
+        '</button></div>';
       resultsEl.classList.add('open');
       return;
     }
@@ -1988,8 +2140,66 @@
     if (resultsEl) { resultsEl.classList.remove('open'); lastResults = []; selIdx = -1; }
   }
 
+  // ------------------------------------------- dialogo "nuovo luogo" (demo)
+  // Su Android non esiste: lo disegna Compose, e requestNewPlace() passa dal
+  // ponte prima di arrivare qui.
+  var npEls = null;
+
+  function openNewPlaceDialog(lat, lng, name) {
+    if (!npEls) return;
+    npEls.name.value = name || '';
+    npEls.coords.value = (lat == null || lng == null)
+      ? '' : (Math.round(lat * 1e4) / 1e4) + ', ' + (Math.round(lng * 1e4) / 1e4);
+    npEls.err.hidden = true;
+    npEls.root.hidden = false;
+    npEls.name.focus();
+  }
+
+  function closeNewPlaceDialog() {
+    if (npEls) npEls.root.hidden = true;
+  }
+
+  function confirmNewPlace() {
+    var name = npEls.name.value.trim();
+    if (!name) { npEls.err.textContent = t('badName'); npEls.err.hidden = false; return; }
+    var c = parseCoords(npEls.coords.value);
+    if (!c) { npEls.err.textContent = t('badCoords'); npEls.err.hidden = false; return; }
+
+    var f = countryAt(c.lat, c.lng);
+    places = places.concat([{
+      id: newPlaceId(), nameIt: name, nameEn: name,
+      lat: c.lat, lng: c.lng, cc: f ? countryKey(f) : null
+    }]);
+    reindexPlaces();
+    renderPlaces();
+    refreshRowStates();
+    saveDemoPlaces();
+    closeNewPlaceDialog();
+    flyToCoords(c.lat, c.lng);
+    selectPlace(places[places.length - 1].id);
+  }
+
+  function wireNewPlaceDialog() {
+    npEls = {
+      root: $('newPlace'), name: $('npName'), coords: $('npCoords'), err: $('npErr')
+    };
+    $('npOk').addEventListener('click', confirmNewPlace);
+    $('npCancel').addEventListener('click', closeNewPlaceDialog);
+    npEls.root.addEventListener('click', function (ev) {
+      if (ev.target === npEls.root) closeNewPlaceDialog();   // click fuori dal riquadro
+    });
+    [npEls.name, npEls.coords].forEach(function (el) {
+      el.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); confirmNewPlace(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); closeNewPlaceDialog(); }
+      });
+    });
+    closeNewPlaceDialog();
+  }
+
   function wireUi() {
     $('ui').hidden = false;
+    wireNewPlaceDialog();
     resultsEl = $('results');
     searchEl = $('search');
     searchEl.placeholder = t('searchPh');
@@ -2021,6 +2231,12 @@
     // -> toggle visitato. Il toggle da lista è la via di selezione per gli
     // stati troppo piccoli da colpire con il dito sul globo.
     resultsEl.addEventListener('click', function (ev) {
+      if (ev.target.id === 'mkPlace') {
+        // Nome gia' scritto: e' quello che l'utente stava cercando.
+        openNewPlaceDialog(null, null, searchEl.value.trim());
+        closeResults();
+        return;
+      }
       var row = ev.target.closest ? ev.target.closest('.row') : null;
       if (!row) return;
       var idx = Number(row.getAttribute('data-idx'));
@@ -2184,6 +2400,7 @@
     world.pointOfView({ lat: 25, lng: 10, altitude: 2.4 }, 0);
 
     wireWakeEvents(container);
+    wireLongPress(container);
     updateClipPlanes();
 
     // Le calotte le tassella globe.gl, ma solo una volta: appena pronte
@@ -2258,6 +2475,15 @@
      */
     setPlaces: function (list) { applyPlaces(list); return places.length; },
     getPlaces: function () { return JSON.stringify(places); },
+    /**
+     * Chiave del paese sotto una coordinata, o stringa vuota se e' mare.
+     * Serve a Compose quando il luogo nasce da coordinate scritte a mano: nella
+     * pressione lunga la chiave arriva gia' con onPlaceRequested.
+     */
+    countryAt: function (lat, lng) {
+      var f = countryAt(Number(lat), Number(lng));
+      return f ? countryKey(f) : '';
+    },
     /** Vola su un luogo gia' piantato e ne apre la card. */
     focusPlace: function (id, ms) {
       var pl = placeById[id];

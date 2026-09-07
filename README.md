@@ -14,6 +14,8 @@ dichiara il permesso INTERNET** e non fa una sola richiesta di rete.
 - Cerchi anche le città: capitali, capoluoghi e centri sopra i 100.000
   abitanti, con la bandiera del loro paese. Il pallino a destra la mette sul
   globo come un puntino bianco; toccando il puntino esce il nome.
+- Un posto che non e' in elenco lo pianti **tenendo premuto sul globo**, o lo
+  scrivi con le sue coordinate quando la ricerca non lo trova.
 - Paesi e luoghi sono **indipendenti**: segnare New York non segna gli Stati
   Uniti, e il contatore continua a contare solo i paesi.
 - Contatore, ricerca e lista dei visitati nella UI nativa Compose.

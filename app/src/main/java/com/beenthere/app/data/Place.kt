@@ -18,7 +18,14 @@ data class Place(
     val nameEn: String,
     val lat: Double,
     val lng: Double,
-    val countryCode: String?
+    val countryCode: String?,
+    /**
+     * Vero per un pin creato a mano, falso per una citta' del catalogo. I pin a
+     * mano non stanno in `cities.json`, quindi la ricerca deve pescarli da qui:
+     * altrimenti un pin piantato per sbaglio in mezzo al Pacifico non si
+     * ritroverebbe piu'.
+     */
+    val custom: Boolean = false
 ) {
     fun name(language: AppLanguage): String = when (language) {
         AppLanguage.IT -> nameIt
@@ -32,6 +39,7 @@ data class Place(
         .put("lat", lat)
         .put("lng", lng)
         .put("cc", countryCode ?: JSONObject.NULL)
+        .put("custom", custom)
 
     companion object {
         fun fromJson(obj: JSONObject): Place? {
@@ -46,7 +54,8 @@ data class Place(
                 nameEn = english,
                 lat = lat,
                 lng = lng,
-                countryCode = obj.optString("cc").takeIf { it.isNotBlank() }
+                countryCode = obj.optString("cc").takeIf { it.isNotBlank() },
+                custom = obj.optBoolean("custom", false)
             )
         }
 
@@ -120,6 +129,17 @@ class PlaceCatalog(val places: List<Place>) {
 
     companion object {
         val EMPTY = PlaceCatalog(emptyList())
+
+        /**
+         * Cerca fra i luoghi dell'utente. Non e' il catalogo: sono poche decine,
+         * quindi si normalizza al volo invece di tenere un indice.
+         */
+        fun searchAmong(places: List<Place>, query: String, language: AppLanguage): List<Place> {
+            val q = normalizeForSearch(query.trim())
+            if (q.isEmpty()) return emptyList()
+            return places.filter { normalizeForSearch(it.name(language)).contains(q) }
+                .sortedBy { normalizeForSearch(it.name(language)) }
+        }
 
         const val ASSET = "cities.json"
 

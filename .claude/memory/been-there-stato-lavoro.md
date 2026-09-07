@@ -43,8 +43,11 @@ in C:/Users/Lo/.claude/plans/quello-che-voglio-io-happy-turtle.md. Fase 1
 consegnata e confermata dall'utente nel browser: cities.json negli asset (4.205
 citta') e la ricerca che le trova. Fase 2 consegnata e da provare: i luoghi si
 accendono, sono un solo oggetto in scena (5 draw call invece di 4) e il pin si
-tocca proiettandolo a schermo, non col raycast. La fase 3 (pin a mano) non e'
-ancora cominciata. Paesi e luoghi sono indipendenti e il contatore resta
+tocca proiettandolo a schermo, non col raycast. Fase 3 consegnata: pressione
+lunga sul globo e creazione da coordinate incollate. **Su richiesta dell'utente
+la fase 3 e' stata scritta senza provarla** (solo controlli statici e uno
+screenshot) e **senza la modifica dei pin**, rimandata: un pin storto si
+cancella e si rifa. Paesi e luoghi sono indipendenti e il contatore resta
 solo sui paesi.
 
 L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.

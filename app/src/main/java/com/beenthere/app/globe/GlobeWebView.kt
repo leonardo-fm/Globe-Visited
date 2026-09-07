@@ -66,6 +66,22 @@ class GlobeController {
         eval("window.BeenThere && BeenThere.focusPlace(${JSONObject.quote(id)})")
     }
 
+    /**
+     * Chiave del paese sotto una coordinata, per un luogo nato da coordinate
+     * scritte a mano. E' l'unico punto in cui si interroga il globo invece di
+     * comandarlo, e serve perche' il point-in-polygon vive li'. Nella pressione
+     * lunga non serve: la chiave arriva gia' con onPlaceRequested.
+     */
+    fun resolveCountry(lat: Double, lng: Double, onResult: (String?) -> Unit) {
+        val view = webView
+        if (view == null) { onResult(null); return }
+        view.evaluateJavascript("window.BeenThere ? BeenThere.countryAt($lat, $lng) : \"\"") { raw ->
+            // evaluateJavascript restituisce JSON: una stringa arriva fra virgolette.
+            val code = runCatching { JSONObject("{\"v\":$raw}").optString("v") }.getOrNull()
+            onResult(code?.takeIf { it.isNotBlank() })
+        }
+    }
+
     /** Lingua di nome del paese e pulsante dentro il popup disegnato dalla pagina. */
     fun setLanguage(tag: String) {
         eval("window.BeenThere && BeenThere.setLanguage(${JSONObject.quote(tag)})")

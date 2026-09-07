@@ -17,7 +17,8 @@ import android.webkit.JavascriptInterface
 class GlobeBridge(
     private val onReady: (catalogJson: String) -> Unit,
     private val onToggled: (code: String, isVisited: Boolean) -> Unit,
-    private val onRemovePlace: (id: String) -> Unit
+    private val onRemovePlace: (id: String) -> Unit,
+    private val onRequestPlace: (lat: Double, lng: Double, countryCode: String) -> Unit
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -37,5 +38,15 @@ class GlobeBridge(
     @JavascriptInterface
     fun onPlaceRemoved(id: String) {
         main.post { onRemovePlace(id) }
+    }
+
+    /**
+     * Pressione lunga sul globo. Il pin non nasce qui: il nome lo chiede
+     * Compose, e la verita' resta in DataStore. [countryCode] e' vuoto se si e'
+     * premuto sul mare.
+     */
+    @JavascriptInterface
+    fun onPlaceRequested(lat: Double, lng: Double, countryCode: String) {
+        main.post { onRequestPlace(lat, lng, countryCode) }
     }
 }

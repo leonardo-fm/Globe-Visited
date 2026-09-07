@@ -15,4 +15,14 @@
     <string name="mark_place">Put on the globe</string>
     <string name="unmark_place">Remove from the globe</string>
 
+    <string name="place_new_title">New place</string>
+    <string name="place_name">Name</string>
+    <string name="place_name_hint">Grandparents’ house</string>
+    <string name="place_coords">Coordinates</string>
+    <string name="place_coords_hint">41.9028, 12.4964</string>
+    <string name="place_coords_invalid">A name and two valid coordinates are required (lat -90..90, lng -180..180).</string>
+    <string name="place_create">Create</string>
+    <string name="place_create_here">Create a place…</string>
+    <string name="cancel">Cancel</string>
+
 </resources>

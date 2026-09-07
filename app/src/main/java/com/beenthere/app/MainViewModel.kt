@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
@@ -65,6 +66,18 @@ data class UiState(
     fun visitedCountries(): List<Country> = catalog.visitedSorted(visited, language)
 }
 
+/**
+ * Un luogo in corso di creazione. Le coordinate ci sono gia' quando il dialogo
+ * nasce da una pressione lunga sul globo, e mancano quando nasce dalla ricerca
+ * a vuoto: e' lo stesso dialogo, cambia solo cosa e' gia' compilato.
+ */
+data class PlaceDraft(
+    val lat: Double? = null,
+    val lng: Double? = null,
+    val countryCode: String? = null,
+    val name: String = ""
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = SettingsRepository(application)
@@ -103,6 +116,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val commands = _commands.asSharedFlow()
+
+    // Il dialogo "nuovo luogo" sta qui e non nella schermata perche' puo'
+    // aprirlo il globo, attraverso il ponte, e la schermata non e' l'unica a
+    // saperlo.
+    private val _draft = MutableStateFlow<PlaceDraft?>(null)
+    val draft: StateFlow<PlaceDraft?> = _draft.asStateFlow()
 
     val uiState: StateFlow<UiState> = combine(
         repository.visited,
@@ -181,6 +200,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (present) repository.removePlace(place.id) else repository.addPlace(place)
             _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+        }
+    }
+
+    /**
+     * Pressione lunga sul globo: si apre il dialogo con le coordinate gia'
+     * riempite. Il pin non nasce finche' l'utente non conferma un nome.
+     */
+    fun onPlaceRequested(lat: Double, lng: Double, countryCode: String) {
+        _draft.value = PlaceDraft(
+            lat = lat,
+            lng = lng,
+            countryCode = countryCode.takeIf { it.isNotBlank() }
+        )
+    }
+
+    /** "Crea un luogo" dalla ricerca a vuoto: coordinate da scrivere a mano. */
+    fun startPlaceDraft(name: String) {
+        _draft.value = PlaceDraft(name = name)
+    }
+
+    fun cancelPlaceDraft() {
+        _draft.value = null
+    }
+
+    /**
+     * Conferma del dialogo. Il paese lo passa la schermata: dalla pressione
+     * lunga arriva gia' dal JavaScript, da coordinate scritte a mano va chiesto
+     * al globo, che e' l'unico a saper fare il point-in-polygon.
+     */
+    fun createPlace(name: String, lat: Double, lng: Double, countryCode: String?) {
+        val place = Place(
+            id = "u:" + System.currentTimeMillis().toString(36),
+            nameIt = name,
+            nameEn = name,
+            lat = lat,
+            lng = lng,
+            countryCode = countryCode,
+            custom = true
+        )
+        _draft.value = null
+        viewModelScope.launch {
+            repository.addPlace(place)
+            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+            _commands.emit(GlobeCommand.FocusPlace(place.id))
         }
     }
 
