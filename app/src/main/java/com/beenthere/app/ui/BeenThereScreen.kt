@@ -11,7 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,15 +28,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beenthere.app.BackupNotice
 import com.beenthere.app.GlobeCommand
 import com.beenthere.app.MainViewModel
+import com.beenthere.app.R
+import com.beenthere.app.data.Backup
 import com.beenthere.app.globe.GlobeBridge
 import com.beenthere.app.globe.GlobeController
 import com.beenthere.app.globe.GlobeWebView
 import com.beenthere.app.data.PlaceCatalog
+import com.beenthere.app.ui.theme.OnPanel
+import com.beenthere.app.ui.theme.OnPanelMuted
+import com.beenthere.app.ui.theme.PanelSolid
+import com.beenthere.app.ui.theme.Visited
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,7 +58,8 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
             onReady = viewModel::onGlobeReady,
             onToggled = viewModel::onGlobeToggled,
             onRemovePlace = viewModel::onPlaceRemoved,
-            onRequestPlace = viewModel::onPlaceRequested
+            onRequestPlace = viewModel::onPlaceRequested,
+            onAddPlace = viewModel::onPlaceAdded
         )
     }
 
@@ -56,8 +71,8 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 is GlobeCommand.SetAll -> controller.setVisited(command.codes)
                 is GlobeCommand.SetOne -> controller.setCountryVisited(command.code, command.isVisited)
                 is GlobeCommand.Focus -> controller.focusCountry(command.code)
-                is GlobeCommand.FocusCoords -> controller.flyToCoords(command.lat, command.lng)
                 is GlobeCommand.FocusPlace -> controller.focusPlace(command.id)
+                is GlobeCommand.PreviewPlace -> controller.previewPlace(command.place)
                 is GlobeCommand.SetPlaces -> controller.setPlaces(command.places)
                 is GlobeCommand.SetLanguage -> controller.setLanguage(command.language.tag)
             }
@@ -85,6 +100,39 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     }
     val pinnedPlaces = remember(state.places) { state.placeIds }
     val draft by viewModel.draft.collectAsStateWithLifecycle()
+    val pendingImport by viewModel.pendingImport.collectAsStateWithLifecycle()
+    val notice by viewModel.notice.collectAsStateWithLifecycle()
+
+    // Selettore di file di sistema: nessun permesso da dichiarare, e il file
+    // puo' finire dove vuole l'utente, Drive compreso.
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let(viewModel::exportTo) }
+
+    // Tipo aperto di proposito: molti gestori di file non mostrano i .json se
+    // si filtra su application/json, e un backup che non si riesce a
+    // selezionare non serve a niente. La validita' la controlla Backup.decode.
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let(viewModel::importFrom) }
+
+    val context = LocalContext.current
+    val noticeText = notice?.let {
+        appString(
+            when (it) {
+                BackupNotice.EXPORT_OK -> R.string.backup_export_ok
+                BackupNotice.EXPORT_FAIL -> R.string.backup_export_fail
+                BackupNotice.IMPORT_FAIL -> R.string.backup_import_fail
+                BackupNotice.IMPORT_OK -> R.string.backup_import_ok
+            }
+        )
+    }
+    LaunchedEffect(notice) {
+        if (noticeText != null) {
+            Toast.makeText(context, noticeText, Toast.LENGTH_SHORT).show()
+            viewModel.clearNotice()
+        }
+    }
 
     ProvideAppLanguage(state.language) {
         Box(Modifier.fillMaxSize()) {
@@ -141,6 +189,35 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 )
             }
 
+            pendingImport?.let { data ->
+                AlertDialog(
+                    onDismissRequest = viewModel::cancelImport,
+                    containerColor = PanelSolid,
+                    titleContentColor = OnPanel,
+                    textContentColor = OnPanel,
+                    title = { Text(appString(R.string.backup_import_title)) },
+                    text = {
+                        Text(
+                            appString(
+                                R.string.backup_import_body,
+                                data.visited.size,
+                                data.places.size
+                            )
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = viewModel::confirmImport) {
+                            Text(appString(R.string.backup_import_confirm), color = Visited)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = viewModel::cancelImport) {
+                            Text(appString(R.string.cancel), color = OnPanelMuted)
+                        }
+                    }
+                )
+            }
+
             draft?.let { current ->
                 AddPlaceDialog(
                     draft = current,
@@ -177,7 +254,9 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     },
                     onRemove = { country -> viewModel.toggleVisited(country.code) },
-                    onLanguageChange = viewModel::setLanguage
+                    onLanguageChange = viewModel::setLanguage,
+                    onExport = { exportLauncher.launch(Backup.fileName()) },
+                    onImport = { importLauncher.launch(arrayOf("*/*")) }
                 )
             }
         }

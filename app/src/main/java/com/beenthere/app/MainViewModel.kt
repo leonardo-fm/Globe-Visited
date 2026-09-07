@@ -1,9 +1,12 @@
 package com.beenthere.app
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.beenthere.app.data.AppLanguage
+import com.beenthere.app.data.Backup
+import com.beenthere.app.data.BackupData
 import com.beenthere.app.data.Country
 import com.beenthere.app.data.CountryCatalog
 import com.beenthere.app.data.Place
@@ -22,6 +25,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
 /** Comandi diretti al globo. Non c'e' comando per i tocchi nati sul globo stesso. */
@@ -30,15 +34,14 @@ sealed interface GlobeCommand {
     data class SetOne(val code: String, val isVisited: Boolean) : GlobeCommand
     data class Focus(val code: String) : GlobeCommand
 
-    /**
-     * Volo su una coordinata qualsiasi: la riga di una citta' che non e' ancora
-     * sul globo. Non c'e' un [Focus] per le citta' perche' non sono feature del
-     * GeoJSON e non c'e' nessun poligono da selezionare.
-     */
-    data class FocusCoords(val lat: Double, val lng: Double) : GlobeCommand
-
     /** Volo su un luogo gia' piantato, con la sua card: come il tocco sul pin. */
     data class FocusPlace(val id: String) : GlobeCommand
+
+    /**
+     * Mostra una citta' che non e' sul globo, con una perlina temporanea. Serve
+     * a rispondere a "dov'e'?" senza che chiederlo la salvi.
+     */
+    data class PreviewPlace(val place: Place) : GlobeCommand
 
     /** Stato completo dei luoghi, come [SetAll] per i paesi. */
     data class SetPlaces(val places: List<Place>) : GlobeCommand
@@ -77,6 +80,9 @@ data class PlaceDraft(
     val countryCode: String? = null,
     val name: String = ""
 )
+
+/** Esito di un esporta/importa, da mostrare all'utente e poi dimenticare. */
+enum class BackupNotice { EXPORT_OK, EXPORT_FAIL, IMPORT_FAIL, IMPORT_OK }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -122,6 +128,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // saperlo.
     private val _draft = MutableStateFlow<PlaceDraft?>(null)
     val draft: StateFlow<PlaceDraft?> = _draft.asStateFlow()
+
+    // Un backup letto e capito, in attesa di conferma. Non si scrive niente
+    // finche' l'utente non ha visto cosa c'e' dentro: l'import sostituisce
+    // tutto, ed e' l'unica operazione dell'app che puo' cancellare dati.
+    private val _pendingImport = MutableStateFlow<BackupData?>(null)
+    val pendingImport: StateFlow<BackupData?> = _pendingImport.asStateFlow()
+
+    private val _notice = MutableStateFlow<BackupNotice?>(null)
+    val notice: StateFlow<BackupNotice?> = _notice.asStateFlow()
+
+    fun clearNotice() { _notice.value = null }
 
     val uiState: StateFlow<UiState> = combine(
         repository.visited,
@@ -181,16 +198,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Tocco sulla riga di una citta'. Se e' gia' sul globo si apre la sua card,
-     * come farebbe il tocco sul pin; altrimenti il globo ci vola sopra e basta.
+     * Tocco sulla riga di una citta'. Se e' gia' sul globo si apre la sua card;
+     * se non lo e' si mostra lo stesso, con una perlina temporanea che non
+     * viene salvata - da li' la si puo' aggiungere. Volare e basta non serviva
+     * a niente: il globo si spostava e non si vedeva dove fosse la citta'.
      */
     fun focusPlace(place: Place) {
         val pinned = place.id in uiState.value.placeIds
         viewModelScope.launch {
             _commands.emit(
                 if (pinned) GlobeCommand.FocusPlace(place.id)
-                else GlobeCommand.FocusCoords(place.lat, place.lng)
+                else GlobeCommand.PreviewPlace(place)
             )
+        }
+    }
+
+    /**
+     * "Metti sul globo" dalla card di una perlina temporanea. Il luogo lo si
+     * ripesca dal catalogo: dal globo arriva solo l'id.
+     */
+    fun onPlaceAdded(id: String) {
+        val place = uiState.value.placeCatalog[id] ?: return
+        viewModelScope.launch {
+            repository.addPlace(place)
+            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
         }
     }
 
@@ -254,6 +285,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun onPlaceRemoved(id: String) {
         viewModelScope.launch { repository.removePlace(id) }
+    }
+
+    /** Scrive il backup nel file che l'utente ha scelto col selettore di sistema. */
+    fun exportTo(uri: Uri) {
+        val state = uiState.value
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val json = Backup.encode(state.visited, state.places)
+                    getApplication<Application>().contentResolver
+                        .openOutputStream(uri)!!
+                        .use { it.write(json.toByteArray()) }
+                }.isSuccess
+            }
+            _notice.value = if (ok) BackupNotice.EXPORT_OK else BackupNotice.EXPORT_FAIL
+        }
+    }
+
+    /**
+     * Legge un file e lo tiene da parte: la scrittura avviene solo con
+     * [confirmImport]. Il file arriva da un selettore di sistema, quindi puo'
+     * essere qualsiasi cosa.
+     */
+    fun importFrom(uri: Uri) {
+        viewModelScope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                runCatching {
+                    getApplication<Application>().contentResolver
+                        .openInputStream(uri)!!
+                        .use { it.readBytes().toString(Charsets.UTF_8) }
+                }.getOrNull()?.let { Backup.decode(it) }
+            }
+            if (parsed == null) _notice.value = BackupNotice.IMPORT_FAIL
+            else _pendingImport.value = parsed
+        }
+    }
+
+    fun cancelImport() { _pendingImport.value = null }
+
+    /** Sostituisce paesi e luoghi con quelli del backup, e riallinea il globo. */
+    fun confirmImport() {
+        val data = _pendingImport.value ?: return
+        _pendingImport.value = null
+        viewModelScope.launch {
+            repository.replaceAll(data.visited, data.places)
+            // La UI si riallinea da sola leggendo DataStore; il globo no, va
+            // ricolorato e ripopolato.
+            _commands.emit(GlobeCommand.SetAll(data.visited))
+            _commands.emit(GlobeCommand.SetPlaces(data.places))
+            _notice.value = BackupNotice.IMPORT_OK
+        }
     }
 
     fun setLanguage(language: AppLanguage) {

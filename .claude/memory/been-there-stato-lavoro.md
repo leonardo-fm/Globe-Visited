@@ -50,6 +50,23 @@ screenshot) e **senza la modifica dei pin**, rimandata: un pin storto si
 cancella e si rifa. Paesi e luoghi sono indipendenti e il contatore resta
 solo sui paesi.
 
+**2026-09-07, secondo piano (correzioni dopo il collaudo dei luoghi):** tutti e
+quattro i punti risultano **scritti nel working tree ma non committati e non
+provati sul telefono**. (1) La ricerca si azzera sul cambio di fuoco in
+`ui/SearchPanel.kt`, con il ripiego gia' dentro: azzera sia quando perde il fuoco
+sia quando lo riacquista. (2) I pin sono sfere costruite a mano
+(`buildPlaceMesh()` in `index.html`), non piu' il layer punti di globe.gl.
+(3) Le quote dei gusci passano da una costante sola `SHELL_GAP = 0.001` (era
+0.003). (4) Il backup JSON c'e' tutto: `data/Backup.kt` (file nuovo, non
+tracciato), export/import nel `MainViewModel`, i due launcher SAF e il dialogo di
+conferma in `BeenThereScreen.kt`, le due voci nella bottom sheet, le stringhe in
+entrambe le lingue, e `docs/note-tecniche.md` aggiornato.
+
+Il JS di `index.html` passa il controllo sintattico. Quello che manca e' solo la
+prova sull'S10e - in particolare il fuoco della ricerca, lo sfarfallio a globo
+piccolo con le quote abbassate, e il giro esporta -> disinstalla -> reinstalla ->
+importa - e il commit.
+
 L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.
 La verifica possibile da questa macchina resta quella descritta in
 [[ambiente-senza-toolchain-android]].

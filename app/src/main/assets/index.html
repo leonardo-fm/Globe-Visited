@@ -308,13 +308,28 @@
   // c'era. Il confronto di profondita' fra calotta e contorno diventava rumore,
   // ed e' per questo che il difetto peggiorava rimpicciolendo il globo.
   // La cura vera e' updateClipPlanes(), che stringe near/far attorno alla sfera
-  // a ogni movimento di camera; queste tre quote sono il margine di sicurezza
-  // che resta valido anche nel caso peggiore (16 bit, globo lontanissimo).
-  var CAP_ALT    = 0.002;   // calotte dei paesi
-  var BORDER_ALT = 0.005;   // rete dei confini, unica per tutto il pianeta
-  var SEL_ALT    = 0.008;   // contorno del paese selezionato
-  var PLACE_ALT  = 0.011;   // pin dei luoghi
-  var POPUP_ALT  = 0.014;   // ancora della card
+  // a ogni movimento di camera; questa distanza e' il margine di sicurezza che
+  // resta sopra al quanto anche nel caso peggiore.
+  //
+  // MA L'ALTEZZA SI PAGA SUL BORDO DEL GLOBO. Al centro del disco si guarda la
+  // superficie di faccia e un guscio sollevato non si distingue; verso
+  // l'orizzonte la si guarda di taglio, e un'altezza h diventa uno spostamento
+  // *laterale* di circa sqrt(2*R*h). Con i vecchi 0,3 unita' facevano 7,7 unita'
+  // d'arco, oltre 4 gradi: il confine si vedeva palesemente staccato dal paese.
+  // Da qui SHELL_GAP a 0,001 (0,1 unita'), che porta lo scostamento a ~4,5
+  // unita' d'arco. Attenzione: lo scostamento va con la RADICE dell'altezza,
+  // quindi dividere la distanza per tre lo riduce solo del 40%; per dimezzarlo
+  // bisogna dividere per quattro.
+  //
+  // Il segnale di essere scesi troppo non e' al centro, e' il ritorno dello
+  // sfarfallio dei confini A GLOBO PICCOLO: e' li' che il quanto di profondita'
+  // e' peggiore. Con i piani stretti il quanto sta sotto le 0,005 unita', quindi
+  // 0,1 unita' restano venti volte sopra.
+  var SHELL_GAP  = 0.001;
+  var CAP_ALT    = 0.002;                    // calotte dei paesi
+  var BORDER_ALT = CAP_ALT + SHELL_GAP;      // rete dei confini, unica per il pianeta
+  var SEL_ALT    = CAP_ALT + 2 * SHELL_GAP;  // contorno del paese selezionato
+  var POPUP_ALT  = CAP_ALT + 4 * SHELL_GAP;  // ancora della card
 
   // I PIN DEI LUOGHI.
   //
@@ -333,13 +348,28 @@
   var PLACE_PX = 5;
 
   // Il raggio non si aggiorna in continuo: cambiarlo ricostruisce la geometria
-  // fusa dei punti, e durante uno zoom succederebbe a ogni frame. Si quantizza
-  // a potenze di questo passo, quindi durante una pinch il raggio cambia una
-  // manciata di volte invece di sessanta al secondo. 1,6 e' abbastanza fitto da
-  // non vedersi e abbastanza largo da non ricostruire di continuo.
-  var PLACE_RADIUS_STEP = 1.6;
-  var PLACE_RADIUS_MIN = 0.04;
+  // fusa dei pin, e durante uno zoom succederebbe a ogni frame. Si quantizza a
+  // potenze di questo passo. Ora che la geometria la costruiamo noi - poche
+  // decine di sferette invece di un layer intero - il passo puo' essere fitto
+  // (1,15: circa mezzo pixel per gradino) senza che si veda ne' pesi.
+  var PLACE_RADIUS_STEP = 1.15;
+  var PLACE_RADIUS_MIN = 0.02;
   var PLACE_RADIUS_MAX = 1.2;
+
+  // Tassellatura della sferetta: meridiani x paralleli. A 10x6 sono 120
+  // triangoli per pin, che con un centinaio di luoghi restano briciole accanto
+  // ai 139.000 delle calotte.
+  var PLACE_SEG_LON = 10;
+  var PLACE_SEG_LAT = 6;
+
+  // Finta ombreggiatura del pin. Il materiale e' non illuminato - come le
+  // calotte - quindi una sfera di colore piatto si vedrebbe come un cerchio.
+  // La luce si finge lungo la verticale locale (dal centro del globo in fuori),
+  // cosi' la sferetta legge come una perlina appoggiata sul paese.
+  var PLACE_SHADE_MIN = 0.42;
+
+  // Quanto e' smorzata la perlina temporanea rispetto a una salvata.
+  var PLACE_TEMP_SHADE = 0.6;
 
   // Raggio del bersaglio del tocco, in pixel. Il pin disegnato e' piccolo, ma
   // il dito no: sotto i ~24 px un pin diventa impossibile da prendere. Il
@@ -436,6 +466,15 @@
   // localStorage. { id, nameIt, nameEn, lat, lng, cc }
   var places = [];
   var placeById = Object.create(null);
+
+  // Perlina TEMPORANEA: la citta' che stai guardando dalla ricerca ma che non
+  // hai (ancora) messo sul globo. Vive solo qui, non in DataStore, e sparisce
+  // appena chiudi la sua card o ne apri un'altra. Serve a rispondere alla
+  // domanda "dov'e'?" senza sporcare i dati per averlo chiesto.
+  var tempPlace = null;
+
+  var placeMesh = null;                // unica mesh con TUTTE le sferette
+  var placeMaterial = null;            // uno solo: la geometria si rifa', il materiale no
 
   // scena costruita da noi (vedi buildMergedScene)
   var capMesh = null;                  // unica mesh con TUTTE le calotte
@@ -534,7 +573,7 @@
     it: { visited: 'Visitato', visitedAria: 'Segna come visitato',
           countries: 'paesi', noResults: 'Nessun risultato.',
           cities: 'Città', searchPh: 'Cerca un paese o una città…',
-          remove: 'Rimuovi', placeAria: 'Metti sul globo',
+          remove: 'Rimuovi', add: 'Metti sul globo', placeAria: 'Metti sul globo',
           newPlace: 'Nuovo luogo', name: 'Nome', coords: 'Coordinate',
           create: 'Crea', cancel: 'Annulla',
           makePlace: 'Crea un luogo qui…',
@@ -543,7 +582,7 @@
     en: { visited: 'Visited', visitedAria: 'Mark as visited',
           countries: 'countries', noResults: 'No results.',
           cities: 'Cities', searchPh: 'Search a country or city…',
-          remove: 'Remove', placeAria: 'Put on the globe',
+          remove: 'Remove', add: 'Put on the globe', placeAria: 'Put on the globe',
           newPlace: 'New place', name: 'Name', coords: 'Coordinates',
           create: 'Create', cancel: 'Cancel',
           makePlace: 'Create a place…',
@@ -1387,19 +1426,193 @@
 
   // ------------------------------------------------------- i luoghi sul globo
   //
-  // I pin sono UN oggetto solo: il layer punti di globe.gl con pointsMerge(true)
-  // fonde tutti i punti in una geometria sola, quindi il pianeta passa da 4 a 5
-  // draw call qualunque sia il numero di luoghi. E' la stessa regola che vale
-  // per calotte e confini: mai un oggetto three per elemento.
+  // I pin sono UN oggetto solo: tutte le sferette fuse in una BufferGeometry,
+  // quindi il pianeta passa da 4 a 5 draw call qualunque sia il numero di
+  // luoghi. E' la stessa regola che vale per calotte e confini: mai un oggetto
+  // three per elemento.
+  //
+  // Il layer punti di globe.gl faceva gia' la fusione, ma disegna CILINDRI e
+  // non c'e' modo di cambiarne la forma: da vicino si vedeva che erano tubi.
+  // Costruendo la geometria a mano si ottengono sfere vere, e in piu' il raggio
+  // puo' seguire lo zoom con un passo fitto - ricostruire qualche decina di
+  // sferette costa niente, mentre rifare un layer intero costava.
 
   function placeName(pl) {
     if (!pl) return '';
     return (lang === 'en' ? pl.nameEn : pl.nameIt) || pl.nameEn || pl.nameIt || '';
   }
 
+  /** I luoghi salvati piu' l'eventuale perlina temporanea. */
+  function allPlaces() {
+    return tempPlace ? places.concat([tempPlace]) : places;
+  }
+
+  function isSavedPlace(id) {
+    for (var i = 0; i < places.length; i++) if (places[i].id === id) return true;
+    return false;
+  }
+
   function reindexPlaces() {
     placeById = Object.create(null);
-    for (var i = 0; i < places.length; i++) placeById[places[i].id] = places[i];
+    var all = allPlaces();
+    for (var i = 0; i < all.length; i++) placeById[all[i].id] = all[i];
+  }
+
+  /**
+   * Mostra una citta' senza salvarla: la perlina compare, il globo ci vola e si
+   * apre la card, da cui la si puo' aggiungere davvero. Se quel luogo e' gia'
+   * sul globo non serve nessuna perlina temporanea.
+   */
+  function previewPlace(p) {
+    if (!p || !p.id) return false;
+    if (isSavedPlace(p.id)) { flyToCoords(p.lat, p.lng); selectPlace(p.id); return true; }
+    tempPlace = {
+      id: String(p.id),
+      nameIt: p.nameIt || p.nameEn || '',
+      nameEn: p.nameEn || p.nameIt || '',
+      lat: Number(p.lat), lng: Number(p.lng),
+      cc: p.cc || null,
+      temp: true
+    };
+    reindexPlaces();
+    renderPlaces();
+    flyToCoords(tempPlace.lat, tempPlace.lng);
+    selectPlace(tempPlace.id);
+    return true;
+  }
+
+  function clearTempPlace() {
+    if (!tempPlace) return false;
+    tempPlace = null;
+    reindexPlaces();
+    renderPlaces();
+    return true;
+  }
+
+  // Sferetta di riferimento, costruita una volta sola: posizioni su una sfera
+  // di raggio 1 con il polo su +Y, piu' la luminosita' di ogni vertice. Per
+  // ogni luogo la si trasforma nel suo sistema locale, dove +Y e' la verticale
+  // del posto. Cosi' i seni e i coseni si calcolano una volta e non per pin.
+  var unitBall = null;
+  function buildUnitBall() {
+    var pos = [], shade = [], idx = [];
+    var nLon = PLACE_SEG_LON, nLat = PLACE_SEG_LAT;
+    for (var iy = 0; iy <= nLat; iy++) {
+      var v = iy / nLat;                       // 0 = polo sud, 1 = polo nord
+      var phi = (v - 0.5) * Math.PI;
+      var y = Math.sin(phi), rr = Math.cos(phi);
+      // Luminosita' dal basso verso l'alto: e' la finta ombreggiatura.
+      var lum = PLACE_SHADE_MIN + (1 - PLACE_SHADE_MIN) * v;
+      for (var ix = 0; ix <= nLon; ix++) {
+        var th = ix / nLon * Math.PI * 2;
+        pos.push(Math.cos(th) * rr, y, Math.sin(th) * rr);
+        shade.push(lum);
+      }
+    }
+    for (var jy = 0; jy < nLat; jy++) {
+      for (var jx = 0; jx < nLon; jx++) {
+        var a0 = jy * (nLon + 1) + jx, b0 = a0 + nLon + 1;
+        idx.push(a0, b0, a0 + 1, a0 + 1, b0, b0 + 1);
+      }
+    }
+    unitBall = { pos: pos, shade: shade, idx: idx, verts: pos.length / 3 };
+  }
+
+  /** Raggio del pin in unita' di mondo, dal raggio angolare corrente. */
+  function placeRadiusUnits() {
+    if (!world || placeRadiusDeg == null) return 0;
+    return placeRadiusDeg * Math.PI / 180 * world.getGlobeRadius();
+  }
+
+  /**
+   * Quota del CENTRO della sferetta: appoggiata sulla calotta, non infilata
+   * dentro e non sospesa sopra. Serve anche al tocco e alla card, che devono
+   * mirare al centro della perlina, non alla superficie sotto.
+   */
+  function placeCenterAlt() {
+    var R = world ? world.getGlobeRadius() : 100;
+    return CAP_ALT + placeRadiusUnits() / R;
+  }
+
+  /**
+   * Tutti i pin in UNA mesh, come le calotte e i confini: una draw call sola,
+   * qualunque sia il numero di luoghi.
+   *
+   * Le sfere le costruiamo a mano perche' il layer punti di globe.gl disegna
+   * cilindri e non c'e' modo di cambiarne la forma. Il colore per-vertice porta
+   * anche la finta ombreggiatura, quindi il materiale resta quello non
+   * illuminato che usiamo dappertutto.
+   */
+  function buildPlaceMesh() {
+    if (!THREE || !world) return;
+    if (placeMesh) {
+      placeMesh.parent && placeMesh.parent.remove(placeMesh);
+      placeMesh.geometry.dispose();
+      placeMesh = null;
+    }
+    var list = allPlaces();
+    if (!list.length) return;
+    if (!unitBall) buildUnitBall();
+
+    var r = placeRadiusUnits();
+    if (!(r > 0)) return;
+    var alt = placeCenterAlt();
+    var rgb = toLinearRgb(PLACE);
+    var nv = unitBall.verts, ni = unitBall.idx.length;
+
+    var position = new Float32Array(list.length * nv * 3);
+    var color = new Float32Array(list.length * nv * 3);
+    var index = new Array(list.length * ni);
+
+    var up = { x: 0, y: 0, z: 0 }, t1 = { x: 0, y: 0, z: 0 }, t2 = { x: 0, y: 0, z: 0 };
+    for (var p = 0; p < list.length; p++) {
+      // La perlina temporanea e' smorzata: si vede, ma si vede anche che non e'
+      // ancora tua. Chi lo dice per esteso e' il pulsante della card.
+      var mul = list[p].temp ? PLACE_TEMP_SHADE : 1;
+      var c = world.getCoords(list[p].lat, list[p].lng, alt);
+      var len = Math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z) || 1;
+      up.x = c.x / len; up.y = c.y / len; up.z = c.z / len;
+
+      // Base ortonormale locale. Il vettore di appoggio non deve essere
+      // parallelo alla verticale, altrimenti il prodotto vettoriale degenera:
+      // ai poli si cambia riferimento.
+      var ax = Math.abs(up.y) > 0.99 ? 1 : 0, ay = Math.abs(up.y) > 0.99 ? 0 : 1, az = 0;
+      t1.x = ay * up.z - az * up.y; t1.y = az * up.x - ax * up.z; t1.z = ax * up.y - ay * up.x;
+      var l1 = Math.sqrt(t1.x * t1.x + t1.y * t1.y + t1.z * t1.z) || 1;
+      t1.x /= l1; t1.y /= l1; t1.z /= l1;
+      t2.x = up.y * t1.z - up.z * t1.y;
+      t2.y = up.z * t1.x - up.x * t1.z;
+      t2.z = up.x * t1.y - up.y * t1.x;
+
+      var vo = p * nv, io = p * ni;
+      for (var k = 0; k < nv; k++) {
+        var bx = unitBall.pos[k * 3] * r,
+            by = unitBall.pos[k * 3 + 1] * r,
+            bz = unitBall.pos[k * 3 + 2] * r;
+        var o = (vo + k) * 3;
+        position[o]     = c.x + t1.x * bx + up.x * by + t2.x * bz;
+        position[o + 1] = c.y + t1.y * bx + up.y * by + t2.y * bz;
+        position[o + 2] = c.z + t1.z * bx + up.z * by + t2.z * bz;
+        var sh = unitBall.shade[k] * mul;
+        color[o] = rgb[0] * sh; color[o + 1] = rgb[1] * sh; color[o + 2] = rgb[2] * sh;
+      }
+      for (var q = 0; q < ni; q++) index[io + q] = vo + unitBall.idx[q];
+    }
+
+    var geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(color, 3));
+    geom.setIndex(index);
+    geom.computeBoundingSphere();
+
+    // Il materiale si crea una volta sola. La geometria invece si rifa' a ogni
+    // cambio di raggio, e creare un materiale per volta ne lascerebbe decine
+    // appesi alla GPU nel giro di una pinch.
+    if (!placeMaterial) placeMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
+    placeMesh = new THREE.Mesh(geom, placeMaterial);
+    placeMesh.raycast = noRaycast;     // il pin lo trova placeAtPointer()
+    placeMesh.renderOrder = 3;
+    if (capMesh && capMesh.parent) capMesh.parent.add(placeMesh);
   }
 
   /**
@@ -1412,7 +1625,7 @@
    */
   var placeRadiusDeg = null;
   function updatePlaceRadius() {
-    if (!world || !places.length) return;
+    if (!world || !allPlaces().length) return;
     var cam, canvas;
     try { cam = world.camera(); canvas = world.renderer().domElement; } catch (e) { return; }
     var R = world.getGlobeRadius();
@@ -1426,22 +1639,14 @@
     q = Math.min(PLACE_RADIUS_MAX, Math.max(PLACE_RADIUS_MIN, q));
     if (q === placeRadiusDeg) return;
     placeRadiusDeg = q;
-    world.pointRadius(q);
-    restrictRaycast();
-    setTimeout(restrictRaycast, 0);
+    buildPlaceMesh();
   }
 
   function renderPlaces() {
     if (!world) return;
-    world.pointsData(places.slice());
-    placeRadiusDeg = null;             // ricalcolo al primo giro di supervise
+    placeRadiusDeg = null;             // forza il ricalcolo, che ricostruisce
     updatePlaceRadius();
-    // L'oggetto fuso e' NUOVO a ogni aggiornamento, quindi il raycast va
-    // rispento ogni volta. Due chiamate perche' il layer puo' ricostruire la
-    // geometria nel tick successivo: la prima copre il caso sincrono, la
-    // seconda quello differito. Costano una traverse di pochi oggetti.
-    restrictRaycast();
-    setTimeout(restrictRaycast, 0);
+    if (placeRadiusDeg == null) buildPlaceMesh();   // nessun luogo: smonta e basta
     wake();
   }
 
@@ -1460,22 +1665,24 @@
    * calotta visibile dalla camera C solo se P.C >= R^2.
    */
   function placeAtPointer(ev) {
-    if (!places.length || !world || !ev) return null;
+    var list = allPlaces();
+    if (!list.length || !world || !ev) return null;
     var cam, canvas;
     try { cam = world.camera().position; canvas = world.renderer().domElement; }
     catch (e) { return null; }
     if (!cam || !canvas || ev.clientX == null) return null;
 
     var R = world.getGlobeRadius(), R2 = R * R;
+    var alt = placeCenterAlt();
     var rect = canvas.getBoundingClientRect();
     var px = ev.clientX - rect.left, py = ev.clientY - rect.top;
     var best = null, bestD2 = PLACE_PICK_PX * PLACE_PICK_PX;
 
-    for (var i = 0; i < places.length; i++) {
-      var pl = places[i];
-      var p = world.getCoords(pl.lat, pl.lng, PLACE_ALT);
+    for (var i = 0; i < list.length; i++) {
+      var pl = list[i];
+      var p = world.getCoords(pl.lat, pl.lng, alt);
       if (p.x * cam.x + p.y * cam.y + p.z * cam.z < R2) continue;
-      var s = world.getScreenCoords(pl.lat, pl.lng, PLACE_ALT);
+      var s = world.getScreenCoords(pl.lat, pl.lng, alt);
       var dx = s.x - px, dy = s.y - py, d2 = dx * dx + dy * dy;
       if (d2 < bestD2) { bestD2 = d2; best = pl; }
     }
@@ -1483,13 +1690,44 @@
   }
 
   function selectPlace(id) {
+    // Aprire un altro luogo butta via la perlina in prova, che ha senso solo
+    // finche' la stai guardando.
+    if (tempPlace && tempPlace.id !== id) clearTempPlace();
     var pl = placeById[id];
     if (!pl || !world) return false;
     selection = { type: 'place', key: id };
     popupEls = null;                   // il layer ricostruira' l'elemento
     world.htmlElementsData([{ type: 'place', key: id, lat: pl.lat, lng: pl.lng }]);
+    // La card di un luogo si ancora un filo piu' in alto della perlina, cosi'
+    // lo stelo non le entra dentro.
+    world.htmlAltitude(placeCenterAlt() + SHELL_GAP);
     showOutline(null);                 // un luogo non e' un poligono: niente contorno
     wake();
+    return true;
+  }
+
+  /**
+   * Promuove la perlina temporanea a luogo vero. Su Android e' Kotlin a
+   * persistere e a ri-spingere l'elenco, che e' quando la perlina smette di
+   * essere temporanea; nel browser si fa tutto qui.
+   */
+  function addTempPlace() {
+    if (!tempPlace) return false;
+    var p = tempPlace;
+    var b = bridge();
+    if (b && typeof b.onPlaceAdded === 'function') {
+      try { b.onPlaceAdded(p.id); } catch (e) { console.warn('bridge', e); }
+      return true;
+    }
+    tempPlace = null;
+    places = places.concat([{
+      id: p.id, nameIt: p.nameIt, nameEn: p.nameEn, lat: p.lat, lng: p.lng, cc: p.cc
+    }]);
+    reindexPlaces();
+    renderPlaces();
+    refreshRowStates();
+    refreshPopup();
+    saveDemoPlaces();
     return true;
   }
 
@@ -1519,6 +1757,9 @@
         cc: p.cc || null
       };
     });
+    // Se la perlina in prova e' appena diventata un luogo vero, la copia
+    // temporanea va tolta: altrimenti resterebbero due perline sovrapposte.
+    if (tempPlace && isSavedPlace(tempPlace.id)) tempPlace = null;
     reindexPlaces();
     // Il popup di un luogo che non c'e' piu' va chiuso, altrimenti resterebbe
     // appeso a un pin invisibile.
@@ -1671,9 +1912,13 @@
     rm.type = 'button';
     // stopPropagation: come per l'interruttore del paese, il tocco non deve
     // arrivare al listener sul document che chiude i risultati della ricerca.
+    // Un pulsante solo, due significati, decisi al momento del tocco: se il
+    // luogo e' salvato si toglie, se e' la perlina temporanea si aggiunge. Cosi'
+    // la card non va ricostruita quando cambia stato sotto di lei.
     rm.addEventListener('click', function (ev) {
       ev.stopPropagation();
-      removePlace(d.key);
+      if (isSavedPlace(d.key)) removePlace(d.key);
+      else addTempPlace();
     });
 
     card.appendChild(hd);
@@ -1745,7 +1990,7 @@
       var pl = placeById[popupEls.key];
       if (!pl) return;
       popupEls.name.textContent = placeName(pl);
-      popupEls.remove.textContent = t('remove');
+      popupEls.remove.textContent = isSavedPlace(popupEls.key) ? t('remove') : t('add');
       return;
     }
     var feat = byKey[popupEls.key];
@@ -1772,7 +2017,9 @@
   function selectCountry(key) {
     var f = byKey[key];
     if (!f || !world) return false;
+    clearTempPlace();                  // guardo un paese: la perlina in prova sparisce
     var focus = focusOf(f);            // centroide dell'anello piu' grande
+    world.htmlAltitude(POPUP_ALT);
     selection = { type: 'country', key: key };
     popupEls = null;                   // il layer ricostruira' l'elemento
     world.htmlElementsData([{ type: 'country', key: key, lat: focus.lat, lng: focus.lng }]);
@@ -1782,6 +2029,7 @@
   }
 
   function clearSelection() {
+    clearTempPlace();
     if (!selection) return;
     selection = null;
     popupEls = null;
@@ -2102,10 +2350,12 @@
     if (item.type === 'country') { flyTo(item.key); selectCountry(item.key); }
     else {
       var c = item.entry.city;
-      flyToCoords(c.lat, c.lng);
-      // Se la citta' e' gia' sul globo si apre la sua card, come farebbe il
-      // tocco sul pin: ricerca e globo devono dare lo stesso risultato.
-      if (placeById[c.id]) selectPlace(c.id);
+      // Anche se non e' sul globo la si fa vedere, con una perlina temporanea:
+      // "dov'e'?" e "la voglio" sono due domande diverse.
+      previewPlace({
+        id: c.id, nameIt: c.nameIt, nameEn: c.nameEn, lat: c.lat, lng: c.lng,
+        cc: c.feat ? countryKey(c.feat) : null
+      });
     }
     closeResults();
     searchEl.blur();
@@ -2336,19 +2586,6 @@
       // Non c'e' piu' onPolygonClick: le calotte sono una mesh sola e non
       // rispondono al raggio, il paese lo decide countryAt() sulla lat/lng.
       .onGlobeClick(handleGlobeClick)
-      // Layer punti: i luoghi. pointsMerge fonde tutti i pin in UN oggetto,
-      // quindi il costo per frame non dipende da quanti ne ha messi l'utente -
-      // e' la stessa regola delle calotte e dei confini. Il tocco non passa
-      // di qui (nessun onPointClick): il pin lo trova placeAtPointer() sulla
-      // proiezione a schermo, e il raycast sull'oggetto fuso resta spento.
-      .pointsData([])
-      .pointsMerge(true)
-      .pointLat(function (d) { return d.lat; })
-      .pointLng(function (d) { return d.lng; })
-      .pointAltitude(PLACE_ALT)
-      .pointRadius(PLACE_RADIUS_MAX)
-      .pointColor(function () { return PLACE; })
-      .pointsTransitionDuration(0)     // niente tween -> niente geometrie rigenerate
       // Layer htmlElements: la card del popup. La posizione la aggiorna
       // globe.gl a ogni frame, e il modifier di visibilita' la fa sparire in
       // dissolvenza quando il paese passa dietro l'orizzonte del globo.
@@ -2484,6 +2721,12 @@
       var f = countryAt(Number(lat), Number(lng));
       return f ? countryKey(f) : '';
     },
+    /**
+     * Mostra una citta' senza salvarla: perlina temporanea, volo e card aperta,
+     * con dentro il pulsante per aggiungerla davvero. Sparisce da sola quando
+     * la card si chiude.
+     */
+    previewPlace: function (p) { return previewPlace(p); },
     /** Vola su un luogo gia' piantato e ne apre la card. */
     focusPlace: function (id, ms) {
       var pl = placeById[id];

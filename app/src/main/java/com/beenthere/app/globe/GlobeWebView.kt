@@ -51,14 +51,17 @@ class GlobeController {
         eval("window.BeenThere && BeenThere.focusCountry(${JSONObject.quote(code)})")
     }
 
-    /** Volo su una citta': non e' una feature del globo, quindi non c'e' niente da selezionare. */
-    fun flyToCoords(lat: Double, lng: Double) {
-        eval("window.BeenThere && BeenThere.flyToCoords($lat, $lng)")
-    }
-
     /** Stato completo dei luoghi, come [setVisited] per i paesi. */
     fun setPlaces(places: List<Place>) {
         eval("window.BeenThere && BeenThere.setPlaces(${Place.listToJson(places)})")
+    }
+
+    /**
+     * Mostra una citta' senza salvarla: perlina temporanea, volo e card aperta.
+     * Sparisce da sola quando la card si chiude.
+     */
+    fun previewPlace(place: Place) {
+        eval("window.BeenThere && BeenThere.previewPlace(${place.toJson()})")
     }
 
     /** Vola su un luogo gia' piantato e ne apre la card. */

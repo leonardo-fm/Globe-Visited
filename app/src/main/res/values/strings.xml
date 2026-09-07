@@ -27,4 +27,15 @@
     <string name="place_create_here">Crea un luogo…</string>
     <string name="cancel">Annulla</string>
 
+
+    <string name="backup_export">Esporta backup</string>
+    <string name="backup_import">Importa backup</string>
+    <string name="backup_export_ok">Backup salvato.</string>
+    <string name="backup_export_fail">Non sono riuscito a salvare il file.</string>
+    <string name="backup_import_fail">Questo file non è un backup di Been There.</string>
+    <string name="backup_import_ok">Backup ripristinato.</string>
+    <string name="backup_import_title">Ripristinare il backup?</string>
+    <string name="backup_import_body">Il file contiene %1$d paesi e %2$d luoghi. Sostituisce quello che hai adesso nell’app.</string>
+    <string name="backup_import_confirm">Sostituisci</string>
+
 </resources>

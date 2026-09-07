@@ -21,6 +21,8 @@ dichiara il permesso INTERNET** e non fa una sola richiesta di rete.
 - Contatore, ricerca e lista dei visitati nella UI nativa Compose.
 - Italiano e inglese, a scelta manuale.
 - I visitati stanno in DataStore, sul telefono. Niente account, niente cloud.
+- Dal contatore puoi **esportare un backup** (paesi e luoghi, un file JSON) e
+  reimportarlo: è l'unica copia che esce dal telefono.
 
 ## Comandi
 

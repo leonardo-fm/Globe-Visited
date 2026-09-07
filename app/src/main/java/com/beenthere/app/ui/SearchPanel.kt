@@ -24,10 +24,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusGroup
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -81,7 +87,31 @@ fun SearchPanel(
     val keyboard = LocalSoftwareKeyboardController.current
     val shape = RoundedCornerShape(14.dp)
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Tornando sulla ricerca si ricomincia da capo, invece di trovarci la parola
+    // di prima. Si azzera in DUE momenti, e servono entrambi:
+    //
+    //  - quando il gruppo perde il fuoco, che e' il caso pulito. Il fuoco si
+    //    guarda sul GRUPPO e non sul solo campo di testo perche' dentro il
+    //    pannello c'e' anche il pallino di ogni riga: se rubasse il fuoco al
+    //    campo, un controllo sul solo campo chiuderebbe la lista proprio mentre
+    //    la si sta usando;
+    //  - quando il campo RIACQUISTA il fuoco. Non e' una ridondanza: toccando
+    //    il globo il fuoco se lo prende la WebView, che e' una View Android
+    //    dentro una AndroidView, e Compose non sempre se ne accorge - quindi la
+    //    perdita di fuoco puo' non arrivare mai. Questo secondo controllo non
+    //    dipende da quella notifica.
+    var hadFocus by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier
+            .onFocusChanged { state ->
+                if (state.hasFocus && !hadFocus) onQueryChange("")
+                if (!state.hasFocus) onQueryChange("")
+                hadFocus = state.hasFocus
+            }
+            .focusGroup(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
 
         Row(
             verticalAlignment = Alignment.CenterVertically,

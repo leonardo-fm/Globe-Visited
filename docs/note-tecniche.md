@@ -126,11 +126,34 @@ sopra — mentre il codice del dataset non ha quel problema.
 
 ## I luoghi: un pin, una draw call
 
-Un luogo e' un puntino bianco sul globo, e i puntini sono **un oggetto solo**:
-il layer punti di globe.gl con `pointsMerge(true)` li fonde in una geometria
-unica. Il pianeta passa da 4 a **5 draw call**, e ci resta qualunque sia il
-numero di luoghi - misurato con 1, 2, 3 e 8 pin. E' la stessa regola delle
+Un luogo è una perlina bianca sul globo, e le perline sono **un oggetto solo**:
+tutte le sferette fuse in una `BufferGeometry`. Il pianeta passa da 4 a **5 draw
+call**, e ci resta qualunque sia il numero di luoghi. È la stessa regola delle
 calotte e dei confini: mai un oggetto three per elemento.
+
+**Perché non il layer punti di globe.gl.** All'inizio i pin erano quelli, con
+`pointsMerge(true)`, che la fusione la faceva già. Ma quel layer disegna
+**cilindri** e non c'è modo di cambiarne la forma: da vicino si vedeva che erano
+tubi. Le sfere quindi se le costruisce `buildPlaceMesh()`, che non è un gran
+lavoro - una sferetta UV di 10×6 segmenti sono 120 triangoli, e con un centinaio
+di luoghi restano briciole accanto ai 139.000 delle calotte.
+
+Due dettagli che la rendono decente:
+
+- **la finta ombreggiatura sta nei colori per-vertice.** Il materiale è non
+  illuminato come quello delle calotte, quindi una sfera di colore piatto si
+  vedrebbe come un cerchio; la luce si finge lungo la verticale locale, e la
+  sferetta legge come una perlina appoggiata sul paese;
+- **il centro sta a una volta il raggio sopra la calotta**, così la perlina
+  poggia sulla superficie invece di sprofondarci o di levitare. È anche la quota
+  a cui mirano il tocco e l'ancora della card, che devono puntare al centro
+  della perlina e non alla superficie sotto.
+
+Costruire la geometria noi ha un effetto collaterale utile: **il raggio può
+seguire lo zoom con un passo fitto**. Con il layer punti, cambiare `pointRadius`
+ricostruiva l'intero layer, quindi il valore andava quantizzato grossolanamente
+(passi di 1,6) e il salto si vedeva; rifare qualche decina di sferette costa
+niente, e il passo è sceso a 1,15, circa mezzo pixel per gradino.
 
 `PLACE_ALT` e' 0,011, sopra tutte e tre le quote esistenti (calotte 0,002,
 confini 0,005, contorno del selezionato 0,008) e sotto l'ancora della card
@@ -161,6 +184,28 @@ subito e una nel tick successivo, perche' il layer puo' ricostruire la geometria
 in differita. Senza, il raggio di hover di globe.gl tornerebbe ad attraversarlo
 venti volte al secondo, e un tocco sul pin finirebbe al layer punti invece che a
 `onGlobeClick`.
+
+### La perlina in prova
+
+Toccare una città nella ricerca prima faceva volare il globo e basta: si
+spostava, e la città non si vedeva. *Dov'è?* e *la voglio* sono due domande
+diverse, e rispondere alla prima non deve salvare niente.
+
+Quindi una città non ancora sul globo si mostra con una **perlina temporanea**:
+vive solo in `tempPlace`, non in DataStore, ed è smorzata al 60% rispetto a una
+salvata. Sparisce da sola quando la sua card si chiude, quando se ne apre
+un'altra, o quando viene promossa a luogo vero.
+
+Il pulsante della card è **uno solo con due significati**, decisi al momento del
+tocco: *Rimuovi* se il luogo è salvato, *Metti sul globo* se è la perlina in
+prova. Così la card non va ricostruita quando lo stato cambia sotto di lei -
+cosa che succede sempre, perché aggiungere passa da Kotlin e torna indietro come
+`setPlaces`.
+
+Il resto del codice lavora su `allPlaces()`, che è i salvati più l'eventuale
+perlina: così disegno e tocco la trattano come tutte le altre, mentre
+`getPlaces()` e il salvataggio vedono solo i salvati e non c'è modo che una
+perlina in prova finisca su disco per sbaglio.
 
 ### Prendere un pin col dito
 
@@ -421,15 +466,40 @@ ragionevole e invece è un bug: se qualcun altro rimette mano ai piani non te ne
 accorgi mai, e restano larghi proprio a globo fermo, cioè quando si guardano i
 confini.
 
-Con i piani stretti, le tre quote (`CAP_ALT`, `BORDER_ALT`, `SEL_ALT`) sono
-distanziate di 0,3 unità l'una dall'altra: sessanta volte il quanto peggiore. Da
-qui due conseguenze:
+Con i piani stretti le quote (`CAP_ALT`, `BORDER_ALT`, `SEL_ALT`) possono stare
+vicine. All'inizio erano distanziate di 0,3 unità l'una dall'altra, sessanta
+volte il quanto peggiore, e da lì due conseguenze:
 
 - **il paese selezionato non viene più sollevato.** `SEL_LIFT` serviva a
   scavalcare i muri laterali dei vicini e a battere il quanto di profondità;
   senza muri e con i piani stretti non serve più, e il paese non fa più il
   saltino quando lo si tocca;
 - **il contorno bianco è continuo.** Prima si accendeva a segmenti alterni.
+
+**Ma quei 0,3 si pagavano sul bordo del globo**, e l'utente se n'è accorto usando
+l'app: a filo dell'orizzonte il confine si vedeva palesemente staccato dal
+paese. Al centro del disco si guarda la superficie di faccia e l'altezza non si
+distingue; verso il bordo la si guarda di taglio, e un'altezza `h` diventa uno
+spostamento **laterale** di circa `sqrt(2*R*h)` — con 0,3 unità fanno 7,7 unità
+d'arco, oltre 4 gradi.
+
+Oggi la distanza è una costante sola, `SHELL_GAP`, e vale **0,001 di scala
+(0,1 unità)**: lo scostamento scende a ~4,5 unità d'arco. Due cose da sapere
+prima di rimetterci mano:
+
+- **lo scostamento va con la radice dell'altezza.** Dividere la distanza per tre
+  lo riduce del 40%, non di tre volte; per dimezzarlo bisogna dividere per
+  quattro. Scendere ancora rende sempre meno;
+- **il segnale di essere scesi troppo non è al centro, è lo sfarfallio dei
+  confini a globo piccolo**, che è dove il quanto di profondità è peggiore. A
+  0,1 unità si sta venti volte sopra il quanto misurato con i piani stretti, ma
+  il margine non è più quello comodo di prima.
+
+Se un giorno servisse azzerare del tutto la parallasse invece di attenuarla, la
+strada è mettere confini e calotte alla **stessa** quota e separarli nel depth
+buffer con `polygonOffset` sul materiale delle calotte: è la soluzione standard
+per una decalcomania complanare, e sul bordo lo scostamento diventa zero per
+costruzione.
 
 ## Il tocco non passa più dal raycast
 
@@ -615,6 +685,37 @@ dire tracciare linee mediane fra i cinque stati rivieraschi, cioè prendere
 posizione su una spartizione che ha richiesto una convenzione internazionale nel
 2018.
 
+## Il backup
+
+L'app non ha rete e non sincronizza niente, quindi il file di backup è l'unica
+copia dei dati che esce dal telefono e l'unica via per portarseli altrove.
+
+**Contiene paesi e luoghi insieme.** Un backup dei soli pin lascerebbe fuori
+metà del lavoro dell'utente, e se ne accorgerebbe solo dopo averne avuto
+bisogno.
+
+**L'import sostituisce**, previa conferma che dice cosa c'è nel file ("42 paesi
+e 130 luoghi"). È l'unica operazione dell'app che può cancellare dati, quindi non
+si scrive niente finché l'utente non ha visto quei due numeri; e la scrittura
+è **una `edit` sola** su DataStore, così non esiste un istante in cui i paesi
+sono quelli nuovi e i luoghi ancora quelli vecchi. Dopo l'import l'app è
+esattamente il file: è il comportamento giusto per un ripristino, che unendo non
+si avrebbe.
+
+Si passa dal **selettore di file di sistema** (`CreateDocument` / `OpenDocument`
+di `ActivityResultContracts`): nessun permesso da dichiarare, e il file finisce
+dove vuole l'utente, Drive compreso. In lettura il tipo è lasciato aperto
+(`*/*`) di proposito: parecchi gestori di file non mostrano i `.json` se si
+filtra su `application/json`, e un backup che non si riesce a selezionare non
+serve a niente. A dire se il file è buono ci pensa `Backup.decode`, che rifiuta
+quello che non porta il marcatore `kind` giusto o che dichiara una versione più
+nuova di quella che sappiamo leggere.
+
+Il `version` in testa al file serve a questo: un domani il formato può cambiare
+senza che i file vecchi diventino illeggibili. I luoghi dentro il backup usano lo
+stesso `Place.toJson()` con cui stanno in DataStore — un formato solo, non due da
+tenere allineati.
+
 ## Dettagli minori
 
 **`[hidden]` ha bisogno di `!important`.** La regola `[hidden] { display: none }`
@@ -622,7 +723,18 @@ posizione su una spartizione che ha richiesto una convenzione internazionale nel
 `#ui { display: flex }` vinceva, quindi su Android la chrome HTML restava a
 schermo sopra la UI Compose, raddoppiando contatore e campo di ricerca.
 
-**Ricerca.** Cerca sul nome nella lingua selezionata più il codice ISO, senza
+**Ricerca.** Tornandoci si ricomincia da capo, invece di trovare la parola di
+prima. Si azzera in **due momenti**, e servono entrambi: quando il gruppo perde
+il fuoco, e quando il campo lo **riacquista**. Il secondo non è una ridondanza -
+toccando il globo il fuoco se lo prende la WebView, che è una `View` Android
+dentro una `AndroidView`, e Compose non sempre se ne accorge: con il solo
+controllo sulla perdita di fuoco l'azzeramento non scattava mai. Il fuoco si
+guarda sul **gruppo** e non sul solo campo di testo (`focusGroup()` più
+`onFocusChanged`) perché nel pannello c'è anche il pallino di ogni riga: se
+rubasse il fuoco al campo, un controllo sul solo campo chiuderebbe la lista
+proprio mentre la si sta usando.
+
+Cerca sul nome nella lingua selezionata più il codice ISO, senza
 distinguere accenti. Per gli stati insulari troppo piccoli da colpire con il
 dito, il pallino a destra di ogni risultato è la via di selezione. Le città
 stanno in una sezione a parte sotto i paesi, non mescolate: sono 4.205 contro

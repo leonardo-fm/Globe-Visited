@@ -25,4 +25,15 @@
     <string name="place_create_here">Create a place…</string>
     <string name="cancel">Cancel</string>
 
+
+    <string name="backup_export">Export backup</string>
+    <string name="backup_import">Import backup</string>
+    <string name="backup_export_ok">Backup saved.</string>
+    <string name="backup_export_fail">Could not save the file.</string>
+    <string name="backup_import_fail">This file is not a Been There backup.</string>
+    <string name="backup_import_ok">Backup restored.</string>
+    <string name="backup_import_title">Restore this backup?</string>
+    <string name="backup_import_body">The file holds %1$d countries and %2$d places. It replaces what you have in the app now.</string>
+    <string name="backup_import_confirm">Replace</string>
+
 </resources>

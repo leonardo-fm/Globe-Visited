@@ -63,6 +63,18 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Sostituisce integralmente paesi e luoghi: e' il ripristino da un backup.
+     * Una `edit` sola, cosi' non esiste un istante in cui i paesi sono quelli
+     * nuovi e i luoghi ancora quelli vecchi.
+     */
+    suspend fun replaceAll(visited: Set<String>, places: List<Place>) {
+        context.dataStore.edit { prefs ->
+            prefs[visitedKey] = visited
+            prefs[placesKey] = Place.listToJson(places)
+        }
+    }
+
     suspend fun removePlace(id: String) {
         context.dataStore.edit { prefs ->
             val current = Place.listFromJson(prefs[placesKey])

@@ -104,7 +104,11 @@ class PlaceCatalog(val places: List<Place>) {
         )
     }
 
+    private val byId: Map<String, Place> = places.associateBy { it.id }
+
     val size: Int get() = places.size
+
+    operator fun get(id: String): Place? = byId[id]
 
     /**
      * Stesso criterio di [CountryCatalog.search] - inizio di parola prima di
