@@ -44,6 +44,7 @@ import com.beenthere.app.ui.theme.BorderGray
 import com.beenthere.app.ui.theme.OnPanel
 import com.beenthere.app.ui.theme.OnPanelMuted
 import com.beenthere.app.ui.theme.Panel
+import com.beenthere.app.ui.theme.PlacePin
 import com.beenthere.app.ui.theme.Visited
 
 /**
@@ -67,11 +68,13 @@ fun SearchPanel(
     placeResults: List<Place>,
     catalog: CountryCatalog,
     visited: Set<String>,
+    pinnedPlaces: Set<String>,
     language: AppLanguage,
     isReady: Boolean,
     onSelect: (Country) -> Unit,
     onSelectPlace: (Place) -> Unit,
     onToggle: (Country) -> Unit,
+    onTogglePlace: (Place) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -177,10 +180,12 @@ fun SearchPanel(
                                     place = place,
                                     country = place.countryCode?.let { catalog[it] },
                                     language = language,
+                                    isPinned = place.id in pinnedPlaces,
                                     onClick = {
                                         onSelectPlace(place)
                                         keyboard?.hide()
-                                    }
+                                    },
+                                    onToggle = { onTogglePlace(place) }
                                 )
                                 if (place != placeResults.last()) {
                                     HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
@@ -218,14 +223,16 @@ fun PlaceRow(
     place: Place,
     country: Country?,
     language: AppLanguage,
-    onClick: () -> Unit
+    isPinned: Boolean,
+    onClick: () -> Unit,
+    onToggle: () -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
+            .padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
     ) {
         // Larghezza fissa anche senza bandiera, cosi' i nomi restano allineati.
         val flag = country?.flag.orEmpty()
@@ -250,6 +257,16 @@ fun PlaceRow(
                 )
             }
         }
+        // Stesso pallino dei paesi, altro significato e altro colore: acceso
+        // vuol dire "e' sul globo". Un luogo non ha uno stato "visitato" e non
+        // tocca il suo paese.
+        VisitedDot(
+            isVisited = isPinned,
+            onToggle = onToggle,
+            activeColor = PlacePin,
+            onDescription = R.string.unmark_place,
+            offDescription = R.string.mark_place
+        )
     }
 }
 

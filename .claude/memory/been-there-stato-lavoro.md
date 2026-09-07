@@ -40,9 +40,11 @@ che il wireframe continui a girare mentre il thread e' bloccato.
 **2026-09-07: cominciata la funzione dei luoghi** (citta' di catalogo + pin
 personali), concordata a fasi - vedi [[lavorare-a-fasi-verificabili]] e il piano
 in C:/Users/Lo/.claude/plans/quello-che-voglio-io-happy-turtle.md. Fase 1
-consegnata e da provare sul telefono: cities.json negli asset (4.205 citta') e la
-ricerca che le trova. Le fasi 2 (accendere le citta' sul globo) e 3 (pin a mano)
-non sono ancora cominciate. Paesi e luoghi sono indipendenti e il contatore resta
+consegnata e confermata dall'utente nel browser: cities.json negli asset (4.205
+citta') e la ricerca che le trova. Fase 2 consegnata e da provare: i luoghi si
+accendono, sono un solo oggetto in scena (5 draw call invece di 4) e il pin si
+tocca proiettandolo a schermo, non col raycast. La fase 3 (pin a mano) non e'
+ancora cominciata. Paesi e luoghi sono indipendenti e il contatore resta
 solo sui paesi.
 
 L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.

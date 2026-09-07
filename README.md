@@ -12,7 +12,10 @@ dichiara il permesso INTERNET** e non fa una sola richiesta di rete.
 - Tocchi un paese sul globo e si apre una card con bandiera, nome e un
   interruttore **Visitato**. La card resta agganciata al paese mentre ruoti.
 - Cerchi anche le città: capitali, capoluoghi e centri sopra i 100.000
-  abitanti, con la bandiera del loro paese. Toccarne una porta il globo lì.
+  abitanti, con la bandiera del loro paese. Il pallino a destra la mette sul
+  globo come un puntino bianco; toccando il puntino esce il nome.
+- Paesi e luoghi sono **indipendenti**: segnare New York non segna gli Stati
+  Uniti, e il contatore continua a contare solo i paesi.
 - Contatore, ricerca e lista dei visitati nella UI nativa Compose.
 - Italiano e inglese, a scelta manuale.
 - I visitati stanno in DataStore, sul telefono. Niente account, niente cloud.
@@ -67,7 +70,8 @@ visitati sta in DataStore, mai nella WebView.
 globe.gl serve solo a costruire la geometria, una volta sola: all'avvio le 1.359
 calotte vengono fuse in un'unica mesh e i confini in un'unica linea, con ogni
 frontiera disegnata una volta invece di due. Il pianeta intero costa **4 draw
-call** per frame, il ciclo di disegno si ferma a globo fermo e la risoluzione
+call** per frame (5 quando ci sono dei luoghi, che stanno anche loro in un
+oggetto unico), il ciclo di disegno si ferma a globo fermo e la risoluzione
 scende da sola se il telefono non tiene il passo.
 
 Costruirlo richiede un paio di secondi, e nel frattempo si vede un globo

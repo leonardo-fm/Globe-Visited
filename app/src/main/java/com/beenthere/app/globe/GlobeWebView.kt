@@ -13,6 +13,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import com.beenthere.app.BuildConfig
+import com.beenthere.app.data.Place
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -53,6 +54,16 @@ class GlobeController {
     /** Volo su una citta': non e' una feature del globo, quindi non c'e' niente da selezionare. */
     fun flyToCoords(lat: Double, lng: Double) {
         eval("window.BeenThere && BeenThere.flyToCoords($lat, $lng)")
+    }
+
+    /** Stato completo dei luoghi, come [setVisited] per i paesi. */
+    fun setPlaces(places: List<Place>) {
+        eval("window.BeenThere && BeenThere.setPlaces(${Place.listToJson(places)})")
+    }
+
+    /** Vola su un luogo gia' piantato e ne apre la card. */
+    fun focusPlace(id: String) {
+        eval("window.BeenThere && BeenThere.focusPlace(${JSONObject.quote(id)})")
     }
 
     /** Lingua di nome del paese e pulsante dentro il popup disegnato dalla pagina. */

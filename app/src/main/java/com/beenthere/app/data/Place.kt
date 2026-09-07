@@ -2,6 +2,7 @@ package com.beenthere.app.data
 
 import android.content.Context
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Un luogo: una citta' del catalogo, o - dalla fase 3 - un pin messo a mano.
@@ -22,6 +23,51 @@ data class Place(
     fun name(language: AppLanguage): String = when (language) {
         AppLanguage.IT -> nameIt
         AppLanguage.EN -> nameEn
+    }
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("nameIt", nameIt)
+        .put("nameEn", nameEn)
+        .put("lat", lat)
+        .put("lng", lng)
+        .put("cc", countryCode ?: JSONObject.NULL)
+
+    companion object {
+        fun fromJson(obj: JSONObject): Place? {
+            val id = obj.optString("id").takeIf { it.isNotBlank() } ?: return null
+            val english = obj.optString("nameEn").takeIf { it.isNotBlank() } ?: id
+            val lat = obj.optDouble("lat", Double.NaN)
+            val lng = obj.optDouble("lng", Double.NaN)
+            if (lat.isNaN() || lng.isNaN()) return null
+            return Place(
+                id = id,
+                nameIt = obj.optString("nameIt").takeIf { it.isNotBlank() } ?: english,
+                nameEn = english,
+                lat = lat,
+                lng = lng,
+                countryCode = obj.optString("cc").takeIf { it.isNotBlank() }
+            )
+        }
+
+        /**
+         * Il nome viene salvato insieme alle coordinate, anche per le citta' di
+         * catalogo: cosi' un luogo gia' piantato sopravvive a una rigenerazione
+         * di `cities.json` che ne cambiasse l'id o lo togliesse.
+         */
+        fun listToJson(places: List<Place>): String =
+            JSONArray().apply { places.forEach { put(it.toJson()) } }.toString()
+
+        fun listFromJson(raw: String?): List<Place> {
+            if (raw.isNullOrBlank()) return emptyList()
+            return runCatching {
+                val array = JSONArray(raw)
+                (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::fromJson) }
+            }.getOrElse {
+                android.util.Log.e("BeenThere", "luoghi non leggibili", it)
+                emptyList()
+            }
+        }
     }
 }
 

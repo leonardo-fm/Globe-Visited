@@ -16,7 +16,8 @@ import android.webkit.JavascriptInterface
  */
 class GlobeBridge(
     private val onReady: (catalogJson: String) -> Unit,
-    private val onToggled: (code: String, isVisited: Boolean) -> Unit
+    private val onToggled: (code: String, isVisited: Boolean) -> Unit,
+    private val onRemovePlace: (id: String) -> Unit
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -30,5 +31,11 @@ class GlobeBridge(
     @JavascriptInterface
     fun onCountryToggled(code: String, isVisited: Boolean) {
         main.post { onToggled(code, isVisited) }
+    }
+
+    /** *Rimuovi* nella card di un luogo: il JS ha gia' tolto il pin. */
+    @JavascriptInterface
+    fun onPlaceRemoved(id: String) {
+        main.post { onRemovePlace(id) }
     }
 }

@@ -124,6 +124,82 @@ esiste già ed è esatto: una città sul mare può cadere **fuori** dal poligono
 suo paese quando la costa è semplificata — è la stessa trappola di Nuuk descritta
 sopra — mentre il codice del dataset non ha quel problema.
 
+## I luoghi: un pin, una draw call
+
+Un luogo e' un puntino bianco sul globo, e i puntini sono **un oggetto solo**:
+il layer punti di globe.gl con `pointsMerge(true)` li fonde in una geometria
+unica. Il pianeta passa da 4 a **5 draw call**, e ci resta qualunque sia il
+numero di luoghi - misurato con 1, 2, 3 e 8 pin. E' la stessa regola delle
+calotte e dei confini: mai un oggetto three per elemento.
+
+`PLACE_ALT` e' 0,011, sopra tutte e tre le quote esistenti (calotte 0,002,
+confini 0,005, contorno del selezionato 0,008) e sotto l'ancora della card
+(0,014). Il pin e' un cilindro che parte dalla superficie, quindi attraversa la
+calotta e si vede da sopra; a filo dell'orizzonte si vede di fianco e sembra uno
+spillo, che e' esattamente quello che deve sembrare.
+
+**Il raggio e' in pixel, non in gradi.** Un raggio angolare fisso e' il
+compromesso peggiore possibile: lo stesso valore che a globo intero fa un
+puntino di 3 px, a zoom massimo fa una macchia di 55 px che copre mezza Italia.
+Verificato a schermo prima di correggerlo. Quindi il raggio angolare si ricalcola
+dall'altitudine della camera:
+
+> un pixel vale `2*(d-R)*tan(fov/2)/altezza` unita' di mondo alla superficie, e
+> un grado d'arco ne vale `R*pi/180`
+
+da cui il raggio che rende sempre `PLACE_PX` pixel. Il valore si **quantizza a
+potenze di 1,6**, perche' assegnare `pointRadius` ricostruisce la geometria fusa
+e durante una pinch succederebbe a ogni frame; con la quantizzazione cambia una
+manciata di volte e il salto non si vede. L'aggiornamento vive dentro
+`supervise()`, accanto ai piani di taglio, quindi segue il disegno su richiesta e
+non gira a globo fermo.
+
+**Il raycast va rispento a ogni aggiornamento.** L'oggetto fuso dei punti e'
+*nuovo* ogni volta che i luoghi cambiano, quindi `restrictRaycast()` va
+richiamato dopo ogni `pointsData()` e dopo ogni cambio di raggio - due volte, una
+subito e una nel tick successivo, perche' il layer puo' ricostruire la geometria
+in differita. Senza, il raggio di hover di globe.gl tornerebbe ad attraversarlo
+venti volte al secondo, e un tocco sul pin finirebbe al layer punti invece che a
+`onGlobeClick`.
+
+### Prendere un pin col dito
+
+Il pin non si tocca col raycast, come non ci si tocca il paese. Ma a differenza
+del paese il confronto **non e' in gradi d'arco, e' in pixel**: un pin vicino al
+bordo del globo e' schiacciato dalla prospettiva, e una soglia angolare lo
+renderebbe un bersaglio enorme li' e minuscolo al centro. Si proietta ogni luogo
+con `getScreenCoords` - la stessa camera che disegna, quindi non c'e' niente da
+tenere allineato a mano - e si prende il piu' vicino entro `PLACE_PICK_PX`
+(26 px: il pin disegnato e' piccolo, il dito no).
+
+I luoghi dell'emisfero nascosto vanno scartati, altrimenti un tocco in Europa
+potrebbe prendere un pin in Nuova Zelanda: proiettano a schermo lo stesso. Per
+una sfera di raggio R centrata nell'origine, il punto P e' sulla calotta visibile
+dalla camera C solo se **P.C >= R^2**.
+
+I pin hanno la precedenza sul paese sotto: sono piccoli e ci si mira apposta,
+mentre il paese si prende ovunque.
+
+**Nota su `onGlobeClick`.** Il secondo argomento e' l'evento DOM, e la lat/lng
+del primo arriva dal raycast di hover di globe.gl, che e' throttlato a 50 ms:
+misurato, in un tocco sintetico quella coordinata e' ancora quella del tocco
+*precedente*. Per il pin si usa `event.clientX/Y`, che e' sempre fresca. Con un
+dito vero la differenza non si vede, ma se un giorno la selezione del paese
+sbagliasse bersaglio su tocchi rapidi, la causa e' li'.
+
+### Il luogo non tocca il paese
+
+Piantare un pin a New York **non** segna gli Stati Uniti, e la card di un luogo
+non ha l'interruttore *Visitato*: un luogo o c'e' o non c'e', e il pulsante e'
+*Rimuovi*. Anche il pallino nella ricerca cambia significato - acceso vuol dire
+"e' sul globo" - e per questo prende il bianco dei pin invece dell'arancione dei
+visitati. Il contatore continua a contare solo i paesi.
+
+Lato dati la separazione e' fisica: i luoghi stanno in una **chiave DataStore
+nuova** (`places`, un array JSON), non dentro `visited_countries`. Aggiungere i
+luoghi non poteva quindi rovinare i paesi gia' salvati, e non serviva nessuna
+migrazione.
+
 ## Verso degli anelli del GeoJSON
 
 All'avvio `index.html` riavvolge in place i poligoni prima di passarli al globo,

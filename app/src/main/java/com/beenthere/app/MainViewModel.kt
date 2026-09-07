@@ -30,11 +30,17 @@ sealed interface GlobeCommand {
     data class Focus(val code: String) : GlobeCommand
 
     /**
-     * Volo su una coordinata qualsiasi: la riga di una citta' nella ricerca.
-     * Non c'e' un [Focus] per le citta' perche' non sono feature del GeoJSON e
-     * il globo non ha niente da selezionare.
+     * Volo su una coordinata qualsiasi: la riga di una citta' che non e' ancora
+     * sul globo. Non c'e' un [Focus] per le citta' perche' non sono feature del
+     * GeoJSON e non c'e' nessun poligono da selezionare.
      */
     data class FocusCoords(val lat: Double, val lng: Double) : GlobeCommand
+
+    /** Volo su un luogo gia' piantato, con la sua card: come il tocco sul pin. */
+    data class FocusPlace(val id: String) : GlobeCommand
+
+    /** Stato completo dei luoghi, come [SetAll] per i paesi. */
+    data class SetPlaces(val places: List<Place>) : GlobeCommand
 
     /**
      * La pagina disegna da se' il popup del paese selezionato, quindi anche lei
@@ -47,11 +53,14 @@ data class UiState(
     val visited: Set<String> = emptySet(),
     val language: AppLanguage = AppLanguage.DEFAULT,
     val catalog: CountryCatalog = CountryCatalog.EMPTY,
-    val places: PlaceCatalog = PlaceCatalog.EMPTY
+    val placeCatalog: PlaceCatalog = PlaceCatalog.EMPTY,
+    /** I luoghi piantati. Il contatore non li conta: quello resta sui paesi. */
+    val places: List<Place> = emptyList()
 ) {
     val isReady: Boolean get() = catalog.size > 0
     val visitedCount: Int get() = visited.count { catalog[it] != null }
     val total: Int get() = catalog.size
+    val placeIds: Set<String> get() = places.mapTo(HashSet()) { it.id }
 
     fun visitedCountries(): List<Country> = catalog.visitedSorted(visited, language)
 }
@@ -99,9 +108,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.visited,
         repository.language,
         catalog,
-        placeCatalog
-    ) { visited, language, catalog, places ->
-        UiState(visited = visited, language = language, catalog = catalog, places = places)
+        placeCatalog,
+        repository.places
+    ) { visited, language, catalog, cities, places ->
+        UiState(
+            visited = visited,
+            language = language,
+            catalog = catalog,
+            placeCatalog = cities,
+            places = places
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
 
     /**
@@ -120,6 +136,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // spingerebbe un insieme vuoto (o la lingua di default) sul globo.
             _commands.emit(GlobeCommand.SetLanguage(repository.language.first()))
             _commands.emit(GlobeCommand.SetAll(repository.visited.first()))
+            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
         }
     }
 
@@ -144,9 +161,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { _commands.emit(GlobeCommand.Focus(code)) }
     }
 
-    /** Tocco sulla riga di una citta': il globo ci vola sopra, e basta. */
+    /**
+     * Tocco sulla riga di una citta'. Se e' gia' sul globo si apre la sua card,
+     * come farebbe il tocco sul pin; altrimenti il globo ci vola sopra e basta.
+     */
     fun focusPlace(place: Place) {
-        viewModelScope.launch { _commands.emit(GlobeCommand.FocusCoords(place.lat, place.lng)) }
+        val pinned = place.id in uiState.value.placeIds
+        viewModelScope.launch {
+            _commands.emit(
+                if (pinned) GlobeCommand.FocusPlace(place.id)
+                else GlobeCommand.FocusCoords(place.lat, place.lng)
+            )
+        }
+    }
+
+    /** Pallino di una citta' nella ricerca: la mette sul globo o la toglie. */
+    fun togglePlace(place: Place) {
+        val present = place.id in uiState.value.placeIds
+        viewModelScope.launch {
+            if (present) repository.removePlace(place.id) else repository.addPlace(place)
+            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+        }
+    }
+
+    /**
+     * Rimozione nata sul globo (pulsante *Rimuovi* nella card): il JavaScript ha
+     * gia' tolto il pin, qui si persiste e basta. Rimandare indietro lo stato
+     * ricostruirebbe la geometria dei punti per niente.
+     */
+    fun onPlaceRemoved(id: String) {
+        viewModelScope.launch { repository.removePlace(id) }
     }
 
     fun setLanguage(language: AppLanguage) {

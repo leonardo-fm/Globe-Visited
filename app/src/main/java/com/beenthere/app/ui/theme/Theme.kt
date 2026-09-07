@@ -10,6 +10,8 @@ import androidx.compose.ui.graphics.Color
 val Ocean = Color(0xFF1B4B8F)
 val Land = Color(0xFF8A8A8A)
 val Visited = Color(0xFFFF8C1A)
+/** Il bianco dei pin dei luoghi, lo stesso di PLACE in index.html. */
+val PlacePin = Color(0xFFE8E8EE)
 val BorderGray = Color(0xFF33333A)
 val Background = Color(0xFF05070F)
 

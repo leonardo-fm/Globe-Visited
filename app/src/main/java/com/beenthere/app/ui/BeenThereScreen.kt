@@ -41,7 +41,8 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     val bridge = remember {
         GlobeBridge(
             onReady = viewModel::onGlobeReady,
-            onToggled = viewModel::onGlobeToggled
+            onToggled = viewModel::onGlobeToggled,
+            onRemovePlace = viewModel::onPlaceRemoved
         )
     }
 
@@ -54,6 +55,8 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 is GlobeCommand.SetOne -> controller.setCountryVisited(command.code, command.isVisited)
                 is GlobeCommand.Focus -> controller.focusCountry(command.code)
                 is GlobeCommand.FocusCoords -> controller.flyToCoords(command.lat, command.lng)
+                is GlobeCommand.FocusPlace -> controller.focusPlace(command.id)
+                is GlobeCommand.SetPlaces -> controller.setPlaces(command.places)
                 is GlobeCommand.SetLanguage -> controller.setLanguage(command.language.tag)
             }
         }
@@ -69,9 +72,10 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     val results = remember(query, state.catalog, state.language) {
         state.catalog.search(query, state.language)
     }
-    val placeResults = remember(query, state.places, state.language) {
-        state.places.search(query, state.language)
+    val placeResults = remember(query, state.placeCatalog, state.language) {
+        state.placeCatalog.search(query, state.language)
     }
+    val pinnedPlaces = remember(state.places) { state.placeIds }
 
     ProvideAppLanguage(state.language) {
         Box(Modifier.fillMaxSize()) {
@@ -111,6 +115,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                     placeResults = placeResults,
                     catalog = state.catalog,
                     visited = state.visited,
+                    pinnedPlaces = pinnedPlaces,
                     language = state.language,
                     isReady = state.isReady,
                     onSelect = { country ->
@@ -121,7 +126,8 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                         viewModel.focusPlace(place)
                         query = ""
                     },
-                    onToggle = { country -> viewModel.toggleVisited(country.code) }
+                    onToggle = { country -> viewModel.toggleVisited(country.code) },
+                    onTogglePlace = { place -> viewModel.togglePlace(place) }
                 )
             }
 

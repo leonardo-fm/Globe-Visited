@@ -14,5 +14,7 @@
     <string name="visited_empty">Nessun paese ancora. Tocca uno stato sul globo e accendi Visitato nel popup, oppure cercalo e usa il pallino a destra.</string>
     <string name="mark_visited">Segna come visitato</string>
     <string name="unmark_visited">Togli dai visitati</string>
+    <string name="mark_place">Metti sul globo</string>
+    <string name="unmark_place">Togli dal globo</string>
 
 </resources>

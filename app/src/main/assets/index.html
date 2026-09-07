@@ -60,6 +60,10 @@
   .row .tg i { width: 12px; height: 12px; border-radius: 50%; background: var(--land); display: block; }
   .row.on .tg i { background: var(--visited); }
   .row.on .tg { border-color: var(--visited); }
+  /* Per una citta' il pallino acceso vuol dire "e' sul globo", non "visitato":
+     prende il bianco dei pin, non l'arancione dei paesi. */
+  .row.city.on .tg i { background: #e8e8ee; }
+  .row.city.on .tg { border-color: #6d6d7a; }
   .empty { padding: 12px; font-size: 13px; color: #7b7b88; }
   /* Citta' nella ricerca di prova: su Android questa lista non esiste, la
      disegna Compose. Il paese sta sotto il nome invece che di fianco perche'
@@ -134,6 +138,11 @@
   .pin .tgl[aria-checked="true"] { border-color: var(--visited); }
   .pin .tgl[aria-checked="true"] .sw { background: rgba(255,140,26,.32); }
   .pin .tgl[aria-checked="true"] .sw i { transform: translateX(14px); background: var(--visited); }
+  /* Card di un luogo: niente interruttore, un luogo o c'e' o non c'e'. */
+  .pin .rm { width: 100%; font: inherit; font-size: 13px; color: #e8e8ee; text-align: center;
+             background: #12121a; border: 1px solid #2b2b36; border-radius: 10px;
+             padding: 7px 9px; cursor: pointer; }
+  .pin .rm:hover { border-color: #4a4a58; }
 
   /* --- schermata di caricamento ------------------------------------------
      Copre i secondi in cui il globo si costruisce. Il vincolo che detta tutto
@@ -265,7 +274,39 @@
   var CAP_ALT    = 0.002;   // calotte dei paesi
   var BORDER_ALT = 0.005;   // rete dei confini, unica per tutto il pianeta
   var SEL_ALT    = 0.008;   // contorno del paese selezionato
+  var PLACE_ALT  = 0.011;   // pin dei luoghi
   var POPUP_ALT  = 0.014;   // ancora della card
+
+  // I PIN DEI LUOGHI.
+  //
+  // Bianco perche' deve leggersi sia sul grigio del non visitato sia
+  // sull'arancione del visitato. Non entra in conflitto con il bianco del
+  // contorno selezionato: quello e' una linea lungo un confine, questo un
+  // puntino, due canali visivi diversi.
+  var PLACE = '#ffffff';
+
+  // Raggio del pin, in PIXEL a schermo. Non in gradi d'arco: un raggio angolare
+  // fisso e' il compromesso peggiore possibile, perche' lo stesso valore vale
+  // ~3 px a globo intero e ~55 px a zoom massimo, cioe' un puntino invisibile
+  // oppure una macchia che copre mezza Italia. Qui il raggio angolare si
+  // ricalcola dall'altitudine della camera (vedi updatePlaceRadius) per tenere
+  // il pin sempre di questa dimensione.
+  var PLACE_PX = 5;
+
+  // Il raggio non si aggiorna in continuo: cambiarlo ricostruisce la geometria
+  // fusa dei punti, e durante uno zoom succederebbe a ogni frame. Si quantizza
+  // a potenze di questo passo, quindi durante una pinch il raggio cambia una
+  // manciata di volte invece di sessanta al secondo. 1,6 e' abbastanza fitto da
+  // non vedersi e abbastanza largo da non ricostruire di continuo.
+  var PLACE_RADIUS_STEP = 1.6;
+  var PLACE_RADIUS_MIN = 0.04;
+  var PLACE_RADIUS_MAX = 1.2;
+
+  // Raggio del bersaglio del tocco, in pixel. Il pin disegnato e' piccolo, ma
+  // il dito no: sotto i ~24 px un pin diventa impossibile da prendere. Il
+  // confronto e' in pixel a schermo, non in gradi, perche' e' il dito a essere
+  // largo un tot di pixel, non un tot di gradi.
+  var PLACE_PICK_PX = 26;
 
   // Suddivisione degli spigoli dei confini, in gradi. Lo spigolo piu' lungo del
   // dataset misura 5,65 gradi, quindi con questo passo si suddivide poco (7092
@@ -330,6 +371,7 @@
   var DEMO_UI = !HAS_NATIVE;
   var DEMO_PERSISTENCE = !HAS_NATIVE;
   var LS_KEY = 'beenthere.visited.demo';
+  var LS_PLACES_KEY = 'beenthere.places.demo';
 
   // Se resta null, il denominatore è il numero di poligoni realmente presenti
   // nel GeoJSON (non 195 - vedi note).
@@ -344,8 +386,17 @@
   var searchIndex = [];                // { key, label, hay, feat }
   var selIdx = -1;
   var lang = 'it';                     // 'it' | 'en', spinta da Kotlin
-  var selected = null;                 // chiave del paese col popup aperto
+  // Cosa ha il popup aperto: { type: 'country' | 'place', key }. Un solo
+  // riferimento per entrambi, cosi' aprire un pin chiude il paese e viceversa
+  // senza doverli tenere sincronizzati a mano.
+  var selection = null;
   var popupEls = null;                 // riferimenti dentro il popup in scena
+
+  // I luoghi piantati dall'utente. La verita' sta in DataStore: qui arrivano
+  // gia' pronti da Kotlin con setPlaces(), e nel prototipo browser da
+  // localStorage. { id, nameIt, nameEn, lat, lng, cc }
+  var places = [];
+  var placeById = Object.create(null);
 
   // scena costruita da noi (vedi buildMergedScene)
   var capMesh = null;                  // unica mesh con TUTTE le calotte
@@ -444,10 +495,12 @@
     it: { visited: 'Visitato', visitedAria: 'Segna come visitato',
           countries: 'paesi', noResults: 'Nessun risultato.',
           cities: 'Città', searchPh: 'Cerca un paese o una città…',
+          remove: 'Rimuovi', placeAria: 'Metti sul globo',
           loadingBorders: 'Carico i confini…', buildingGlobe: 'Costruisco il globo…' },
     en: { visited: 'Visited', visitedAria: 'Mark as visited',
           countries: 'countries', noResults: 'No results.',
           cities: 'Cities', searchPh: 'Search a country or city…',
+          remove: 'Remove', placeAria: 'Put on the globe',
           loadingBorders: 'Loading borders…', buildingGlobe: 'Building the globe…' }
   };
   function t(key) { return (STR[lang] || STR.it)[key]; }
@@ -1205,6 +1258,7 @@
   function supervise(t) {
     superviseRaf = 0;
     updateClipPlanes();
+    updatePlaceRadius();
     sampleFrame(t);
     // Finche' il globo scorre per inerzia si continua a disegnare, senza
     // bisogno di indovinare in anticipo quanto durera' la frenata.
@@ -1284,6 +1338,149 @@
     lastFrameT = t;
   }
 
+  // ------------------------------------------------------- i luoghi sul globo
+  //
+  // I pin sono UN oggetto solo: il layer punti di globe.gl con pointsMerge(true)
+  // fonde tutti i punti in una geometria sola, quindi il pianeta passa da 4 a 5
+  // draw call qualunque sia il numero di luoghi. E' la stessa regola che vale
+  // per calotte e confini: mai un oggetto three per elemento.
+
+  function placeName(pl) {
+    if (!pl) return '';
+    return (lang === 'en' ? pl.nameEn : pl.nameIt) || pl.nameEn || pl.nameIt || '';
+  }
+
+  function reindexPlaces() {
+    placeById = Object.create(null);
+    for (var i = 0; i < places.length; i++) placeById[places[i].id] = places[i];
+  }
+
+  /**
+   * Tiene il pin grande sempre gli stessi pixel, qualunque sia lo zoom.
+   *
+   * Un pixel a schermo vale `2*(d-R)*tan(fov/2)/altezza` unita' di mondo alla
+   * superficie del globo, e un grado d'arco ne vale `R*pi/180`: da qui il
+   * raggio angolare che rende PLACE_PX pixel. Il valore si quantizza a passi
+   * di PLACE_RADIUS_STEP, perche' assegnarlo ricostruisce la geometria fusa.
+   */
+  var placeRadiusDeg = null;
+  function updatePlaceRadius() {
+    if (!world || !places.length) return;
+    var cam, canvas;
+    try { cam = world.camera(); canvas = world.renderer().domElement; } catch (e) { return; }
+    var R = world.getGlobeRadius();
+    var h = canvas.clientHeight || canvas.height || 1;
+    var unitsPerPx = 2 * Math.max(1, cam.position.length() - R) *
+                     Math.tan(cam.fov * Math.PI / 360) / h;
+    var want = PLACE_PX * unitsPerPx * 180 / (Math.PI * R);
+
+    var q = Math.pow(PLACE_RADIUS_STEP,
+                     Math.round(Math.log(want) / Math.log(PLACE_RADIUS_STEP)));
+    q = Math.min(PLACE_RADIUS_MAX, Math.max(PLACE_RADIUS_MIN, q));
+    if (q === placeRadiusDeg) return;
+    placeRadiusDeg = q;
+    world.pointRadius(q);
+    restrictRaycast();
+    setTimeout(restrictRaycast, 0);
+  }
+
+  function renderPlaces() {
+    if (!world) return;
+    world.pointsData(places.slice());
+    placeRadiusDeg = null;             // ricalcolo al primo giro di supervise
+    updatePlaceRadius();
+    // L'oggetto fuso e' NUOVO a ogni aggiornamento, quindi il raycast va
+    // rispento ogni volta. Due chiamate perche' il layer puo' ricostruire la
+    // geometria nel tick successivo: la prima copre il caso sincrono, la
+    // seconda quello differito. Costano una traverse di pochi oggetti.
+    restrictRaycast();
+    setTimeout(restrictRaycast, 0);
+    wake();
+  }
+
+  /**
+   * Il pin sotto il dito, se c'e'.
+   *
+   * Il confronto e' in **pixel a schermo**, non in gradi d'arco: un pin vicino
+   * all'orizzonte del globo e' schiacciato dalla prospettiva, e una soglia
+   * angolare lo renderebbe un bersaglio enorme li' e minuscolo al centro.
+   * `getScreenCoords` fa la proiezione con la stessa camera che disegna, quindi
+   * non c'e' niente da tenere allineato a mano.
+   *
+   * I pin dell'emisfero nascosto vanno scartati: proiettano lo stesso a schermo,
+   * e senza il controllo un tocco in Europa potrebbe prendere un pin in Nuova
+   * Zelanda. Per una sfera di raggio R centrata nell'origine il punto P e' sulla
+   * calotta visibile dalla camera C solo se P.C >= R^2.
+   */
+  function placeAtPointer(ev) {
+    if (!places.length || !world || !ev) return null;
+    var cam, canvas;
+    try { cam = world.camera().position; canvas = world.renderer().domElement; }
+    catch (e) { return null; }
+    if (!cam || !canvas || ev.clientX == null) return null;
+
+    var R = world.getGlobeRadius(), R2 = R * R;
+    var rect = canvas.getBoundingClientRect();
+    var px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+    var best = null, bestD2 = PLACE_PICK_PX * PLACE_PICK_PX;
+
+    for (var i = 0; i < places.length; i++) {
+      var pl = places[i];
+      var p = world.getCoords(pl.lat, pl.lng, PLACE_ALT);
+      if (p.x * cam.x + p.y * cam.y + p.z * cam.z < R2) continue;
+      var s = world.getScreenCoords(pl.lat, pl.lng, PLACE_ALT);
+      var dx = s.x - px, dy = s.y - py, d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = pl; }
+    }
+    return best;
+  }
+
+  function selectPlace(id) {
+    var pl = placeById[id];
+    if (!pl || !world) return false;
+    selection = { type: 'place', key: id };
+    popupEls = null;                   // il layer ricostruira' l'elemento
+    world.htmlElementsData([{ type: 'place', key: id, lat: pl.lat, lng: pl.lng }]);
+    showOutline(null);                 // un luogo non e' un poligono: niente contorno
+    wake();
+    return true;
+  }
+
+  /** Toglie un luogo. Kotlin persiste; nel browser si salva in localStorage. */
+  function removePlace(id) {
+    if (!placeById[id]) return false;
+    places = places.filter(function (p) { return p.id !== id; });
+    reindexPlaces();
+    if (selection && selection.type === 'place' && selection.key === id) clearSelection();
+    renderPlaces();
+    refreshRowStates();
+    saveDemoPlaces();
+    notifyPlaceRemoved(id);
+    return true;
+  }
+
+  /** Sostituzione integrale dello stato, come setVisited per i paesi. */
+  function applyPlaces(list) {
+    places = (list || []).filter(function (p) {
+      return p && p.id && isFinite(p.lat) && isFinite(p.lng);
+    }).map(function (p) {
+      return {
+        id: String(p.id),
+        nameIt: p.nameIt || p.nameEn || '',
+        nameEn: p.nameEn || p.nameIt || '',
+        lat: Number(p.lat), lng: Number(p.lng),
+        cc: p.cc || null
+      };
+    });
+    reindexPlaces();
+    // Il popup di un luogo che non c'e' piu' va chiuso, altrimenti resterebbe
+    // appeso a un pin invisibile.
+    if (selection && selection.type === 'place' && !placeById[selection.key]) clearSelection();
+    renderPlaces();
+    refreshRowStates();
+    refreshPopup();
+  }
+
   // -------------------------------------------------- popup del paese scelto
   // Un tocco sul globo non segna piu' niente: apre questa card, che il layer
   // htmlElements di globe.gl tiene ancorata al centroide del paese e sposta a
@@ -1291,6 +1488,61 @@
   // visitato partendo dal globo.
 
   function buildPopup(d) {
+    return d && d.type === 'place' ? buildPlacePopup(d) : buildCountryPopup(d);
+  }
+
+  /**
+   * Card di un luogo: bandiera del suo paese, nome, e *Rimuovi*. Non c'e'
+   * l'interruttore "Visitato" perche' un luogo non ha due stati - o e' sul
+   * globo o non c'e' - e non tocca il paese: segnare New York non segna gli
+   * Stati Uniti.
+   */
+  function buildPlacePopup(d) {
+    var pl = placeById[d.key];
+
+    var root = document.createElement('div');
+    root.className = 'pin';
+
+    var stem = document.createElement('div'); stem.className = 'stem';
+    var dot = document.createElement('div'); dot.className = 'dot';
+
+    var card = document.createElement('div'); card.className = 'card';
+    var hd = document.createElement('div'); hd.className = 'hd';
+
+    var feat = pl && pl.cc ? byKey[pl.cc] : null;
+    var flag = feat ? flagEmoji(feat) : null;
+    if (flag) {
+      var flagEl = document.createElement('span');
+      flagEl.className = 'flag';
+      flagEl.textContent = flag;
+      hd.appendChild(flagEl);
+    }
+    var nameEl = document.createElement('span');
+    nameEl.className = 'nm';
+    hd.appendChild(nameEl);
+
+    var rm = document.createElement('button');
+    rm.className = 'rm';
+    rm.type = 'button';
+    // stopPropagation: come per l'interruttore del paese, il tocco non deve
+    // arrivare al listener sul document che chiude i risultati della ricerca.
+    rm.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      removePlace(d.key);
+    });
+
+    card.appendChild(hd);
+    card.appendChild(rm);
+    root.appendChild(stem);
+    root.appendChild(dot);
+    root.appendChild(card);
+
+    popupEls = { type: 'place', key: d.key, name: nameEl, remove: rm };
+    refreshPopup();
+    return root;
+  }
+
+  function buildCountryPopup(d) {
     var feat = byKey[d.key];
 
     var root = document.createElement('div');
@@ -1335,7 +1587,7 @@
     root.appendChild(dot);
     root.appendChild(card);
 
-    popupEls = { key: d.key, name: nameEl, toggle: tgl, label: labelEl };
+    popupEls = { type: 'country', key: d.key, name: nameEl, toggle: tgl, label: labelEl };
     refreshPopup();
     return root;
   }
@@ -1344,6 +1596,13 @@
   // resta lo stesso, cosi' il popup non sfarfalla a ogni toggle.
   function refreshPopup() {
     if (!popupEls) return;
+    if (popupEls.type === 'place') {
+      var pl = placeById[popupEls.key];
+      if (!pl) return;
+      popupEls.name.textContent = placeName(pl);
+      popupEls.remove.textContent = t('remove');
+      return;
+    }
     var feat = byKey[popupEls.key];
     if (!feat) return;
     popupEls.name.textContent = countryName(feat);
@@ -1369,17 +1628,17 @@
     var f = byKey[key];
     if (!f || !world) return false;
     var focus = focusOf(f);            // centroide dell'anello piu' grande
-    selected = key;
+    selection = { type: 'country', key: key };
     popupEls = null;                   // il layer ricostruira' l'elemento
-    world.htmlElementsData([{ key: key, lat: focus.lat, lng: focus.lng }]);
+    world.htmlElementsData([{ type: 'country', key: key, lat: focus.lat, lng: focus.lng }]);
     showOutline(key);
     wake();
     return true;
   }
 
   function clearSelection() {
-    if (!selected) return;
-    selected = null;
+    if (!selection) return;
+    selection = null;
     popupEls = null;
     if (world) {
       world.htmlElementsData([]);
@@ -1410,13 +1669,28 @@
     return !!(el && typeof el.closest === 'function' && el.closest('.pin'));
   }
 
-  /** Unico punto d'ingresso del tocco sul globo: paese o oceano. */
+  /**
+   * Unico punto d'ingresso del tocco sul globo: pin, paese o oceano.
+   *
+   * I pin hanno la precedenza sul paese sotto: sono piccoli e ci si mira
+   * apposta, mentre il paese si prende ovunque. Un secondo tocco sulla stessa
+   * cosa chiude, l'oceano chiude.
+   */
   function handleGlobeClick(coords, ev) {
     if (fromPopup(ev)) return;
+
+    var pl = placeAtPointer(ev);
+    if (pl) {
+      if (selection && selection.type === 'place' && selection.key === pl.id) clearSelection();
+      else selectPlace(pl.id);
+      return;
+    }
+
     var f = coords ? countryAt(coords.lat, coords.lng) : null;
     if (!f) { clearSelection(); return; }
     var key = countryKey(f);
-    if (key === selected) clearSelection(); else selectCountry(key);
+    if (selection && selection.type === 'country' && selection.key === key) clearSelection();
+    else selectCountry(key);
   }
 
   // -------------------------------------------------------- ponte con Kotlin
@@ -1427,6 +1701,12 @@
     var b = bridge();
     if (b && typeof b.onCountryToggled === 'function') {
       try { b.onCountryToggled(key, isVisited); } catch (e) { console.warn('bridge', e); }
+    }
+  }
+  function notifyPlaceRemoved(id) {
+    var b = bridge();
+    if (b && typeof b.onPlaceRemoved === 'function') {
+      try { b.onPlaceRemoved(id); } catch (e) { console.warn('bridge', e); }
     }
   }
 
@@ -1458,6 +1738,19 @@
     try {
       var raw = localStorage.getItem(LS_KEY);
       if (raw) JSON.parse(raw).forEach(function (k) { if (byKey[k]) visited.add(k); });
+    } catch (e) {}
+  }
+  // I luoghi del prototipo browser. Su Android non gira: la' la verita' sta in
+  // DataStore e localStorage e' proprio spento (domStorageEnabled = false).
+  function saveDemoPlaces() {
+    if (!DEMO_PERSISTENCE) return;
+    try { localStorage.setItem(LS_PLACES_KEY, JSON.stringify(places)); } catch (e) {}
+  }
+  function loadDemoPlaces() {
+    if (!DEMO_PERSISTENCE) return;
+    try {
+      var raw = localStorage.getItem(LS_PLACES_KEY);
+      if (raw) applyPlaces(JSON.parse(raw));
     } catch (e) {}
   }
 
@@ -1634,11 +1927,15 @@
     if (cityList.length) {
       html += '<div class="sect">' + escapeHtml(t('cities')) + '</div>';
       cityList.forEach(function (e) {
-        html += '<div class="row city' + (i === selIdx ? ' sel' : '') + '" data-idx="' + i + '">' +
+        html += '<div class="row city' + (placeById[e.city.id] ? ' on' : '') +
+                (i === selIdx ? ' sel' : '') + '" data-idx="' + i +
+                '" data-place="' + escapeHtml(e.city.id) + '">' +
                 '<span class="fl">' + escapeHtml(e.flag) + '</span>' +
                 '<span class="stack"><span class="nm">' + escapeHtml(e.label) + '</span>' +
                 (e.sub ? '<span class="sub">' + escapeHtml(e.sub) + '</span>' : '') +
-                '</span></div>';
+                '</span>' +
+                '<button class="tg" type="button" data-toggle="1" ' +
+                'aria-label="' + escapeHtml(t('placeAria')) + '"><i></i></button></div>';
         i++;
       });
     }
@@ -1651,17 +1948,41 @@
     var item = lastResults[idx];
     if (!item) return;
     if (item.type === 'country') { flyTo(item.key); selectCountry(item.key); }
-    else { flyToCoords(item.entry.city.lat, item.entry.city.lng); }
+    else {
+      var c = item.entry.city;
+      flyToCoords(c.lat, c.lng);
+      // Se la citta' e' gia' sul globo si apre la sua card, come farebbe il
+      // tocco sul pin: ricerca e globo devono dare lo stesso risultato.
+      if (placeById[c.id]) selectPlace(c.id);
+    }
     closeResults();
     searchEl.blur();
   }
 
   function refreshRowStates() {
     if (!resultsEl) return;
-    // Solo le righe dei paesi: una citta' non ha uno stato "visitato".
     Array.prototype.forEach.call(resultsEl.querySelectorAll('.row[data-key]'), function (r) {
       r.classList.toggle('on', visited.has(r.getAttribute('data-key')));
     });
+    // Per una citta' "acceso" vuol dire un'altra cosa: e' sul globo. Il paese
+    // resta un fatto suo - segnare New York non segna gli Stati Uniti.
+    Array.prototype.forEach.call(resultsEl.querySelectorAll('.row[data-place]'), function (r) {
+      r.classList.toggle('on', !!placeById[r.getAttribute('data-place')]);
+    });
+  }
+
+  /** Accende o spegne una citta' del catalogo, dalla ricerca di prova. */
+  function toggleDemoPlace(entry) {
+    var c = entry.city;
+    if (placeById[c.id]) { removePlace(c.id); return; }
+    places = places.concat([{
+      id: c.id, nameIt: c.nameIt, nameEn: c.nameEn, lat: c.lat, lng: c.lng,
+      cc: c.feat ? countryKey(c.feat) : null
+    }]);
+    reindexPlaces();
+    renderPlaces();
+    refreshRowStates();
+    saveDemoPlaces();
   }
   function closeResults() {
     if (resultsEl) { resultsEl.classList.remove('open'); lastResults = []; selIdx = -1; }
@@ -1702,13 +2023,15 @@
     resultsEl.addEventListener('click', function (ev) {
       var row = ev.target.closest ? ev.target.closest('.row') : null;
       if (!row) return;
+      var idx = Number(row.getAttribute('data-idx'));
       var key = row.getAttribute('data-key');
-      if (key && ev.target.closest('[data-toggle]')) {
+      if (ev.target.closest('[data-toggle]')) {
         ev.stopPropagation();
-        applyToggle(key);
+        if (key) applyToggle(key);
+        else if (lastResults[idx]) toggleDemoPlace(lastResults[idx].entry);
         return;
       }
-      activateResult(Number(row.getAttribute('data-idx')));
+      activateResult(idx);
     });
 
     document.addEventListener('pointerdown', function (ev) {
@@ -1797,6 +2120,19 @@
       // Non c'e' piu' onPolygonClick: le calotte sono una mesh sola e non
       // rispondono al raggio, il paese lo decide countryAt() sulla lat/lng.
       .onGlobeClick(handleGlobeClick)
+      // Layer punti: i luoghi. pointsMerge fonde tutti i pin in UN oggetto,
+      // quindi il costo per frame non dipende da quanti ne ha messi l'utente -
+      // e' la stessa regola delle calotte e dei confini. Il tocco non passa
+      // di qui (nessun onPointClick): il pin lo trova placeAtPointer() sulla
+      // proiezione a schermo, e il raycast sull'oggetto fuso resta spento.
+      .pointsData([])
+      .pointsMerge(true)
+      .pointLat(function (d) { return d.lat; })
+      .pointLng(function (d) { return d.lng; })
+      .pointAltitude(PLACE_ALT)
+      .pointRadius(PLACE_RADIUS_MAX)
+      .pointColor(function () { return PLACE; })
+      .pointsTransitionDuration(0)     // niente tween -> niente geometrie rigenerate
       // Layer htmlElements: la card del popup. La posizione la aggiorna
       // globe.gl a ogni frame, e il modifier di visibilita' la fa sparire in
       // dissolvenza quando il paese passa dietro l'orizzonte del globo.
@@ -1869,6 +2205,7 @@
 
   function finishStartup(t0) {
     if (DEMO_UI) wireUi();
+    loadDemoPlaces();          // no-op su Android: la' i luoghi arrivano da Kotlin
     updateCounter();
     wake();
     // Dissolvenza invece di uno stacco netto: il globo emerge mentre il
@@ -1914,6 +2251,21 @@
      * quindi qui non c'e' nessun popup da aprire.
      */
     flyToCoords: function (lat, lng, ms) { return flyToCoords(lat, lng, ms); },
+    /**
+     * Sostituisce integralmente i luoghi sul globo: la sorgente di verita' e'
+     * DataStore, come per i visitati. Ogni voce e' { id, nameIt, nameEn, lat,
+     * lng, cc }, dove `cc` e' la chiave del paese e serve solo alla bandiera.
+     */
+    setPlaces: function (list) { applyPlaces(list); return places.length; },
+    getPlaces: function () { return JSON.stringify(places); },
+    /** Vola su un luogo gia' piantato e ne apre la card. */
+    focusPlace: function (id, ms) {
+      var pl = placeById[id];
+      if (!pl) return false;
+      flyToCoords(pl.lat, pl.lng, ms);
+      selectPlace(id);
+      return true;
+    },
     /** Chiude il popup, se aperto. */
     clearSelection: function () { clearSelection(); },
     /**
