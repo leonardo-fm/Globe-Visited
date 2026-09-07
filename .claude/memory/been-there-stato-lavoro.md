@@ -37,6 +37,14 @@ prodotto e' stata riaperta.
 Non provato sul telefono: mancano il tempo di avvio reale sull'S10e e la conferma
 che il wireframe continui a girare mentre il thread e' bloccato.
 
+**2026-09-07: cominciata la funzione dei luoghi** (citta' di catalogo + pin
+personali), concordata a fasi - vedi [[lavorare-a-fasi-verificabili]] e il piano
+in C:/Users/Lo/.claude/plans/quello-che-voglio-io-happy-turtle.md. Fase 1
+consegnata e da provare sul telefono: cities.json negli asset (4.205 citta') e la
+ricerca che le trova. Le fasi 2 (accendere le citta' sul globo) e 3 (pin a mano)
+non sono ancora cominciate. Paesi e luoghi sono indipendenti e il contatore resta
+solo sui paesi.
+
 L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.
 La verifica possibile da questa macchina resta quella descritta in
 [[ambiente-senza-toolchain-android]].

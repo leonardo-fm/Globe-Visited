@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.sp
 import com.beenthere.app.R
 import com.beenthere.app.data.AppLanguage
 import com.beenthere.app.data.Country
+import com.beenthere.app.data.CountryCatalog
+import com.beenthere.app.data.Place
 import com.beenthere.app.ui.theme.BorderGray
 import com.beenthere.app.ui.theme.OnPanel
 import com.beenthere.app.ui.theme.OnPanelMuted
@@ -46,11 +48,15 @@ import com.beenthere.app.ui.theme.Visited
 
 /**
  * Campo di ricerca e risultati. La ricerca e' interamente nativa: il catalogo
- * arriva dal JavaScript una volta sola all'avvio, quindi il campo resta
- * disabilitato finche' il globo non e' pronto (circa un secondo).
+ * dei paesi arriva dal JavaScript una volta sola all'avvio e quello delle citta'
+ * dagli asset, quindi il campo resta disabilitato finche' il globo non e' pronto
+ * (circa un secondo).
  *
- * Tocco sulla riga: il globo ruota e zooma sul paese.
+ * Tocco sulla riga: il globo ruota e zooma sul paese o sulla citta'.
  * Tocco sul pallino: segna/desegna visitato, senza muovere il globo.
+ *
+ * Le citta' stanno sotto i paesi, in una sezione a parte: sono migliaia contro
+ * 242, e mescolarle farebbe sparire il paese cercato in mezzo ai suoi capoluoghi.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -58,10 +64,13 @@ fun SearchPanel(
     query: String,
     onQueryChange: (String) -> Unit,
     results: List<Country>,
+    placeResults: List<Place>,
+    catalog: CountryCatalog,
     visited: Set<String>,
     language: AppLanguage,
     isReady: Boolean,
     onSelect: (Country) -> Unit,
+    onSelectPlace: (Place) -> Unit,
     onToggle: (Country) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -105,9 +114,11 @@ fun SearchPanel(
                     cursorBrush = SolidColor(Visited),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = {
-                        results.firstOrNull()?.let {
-                            onSelect(it)
-                            keyboard?.hide()
+                        val country = results.firstOrNull()
+                        val place = placeResults.firstOrNull()
+                        when {
+                            country != null -> { onSelect(country); keyboard?.hide() }
+                            place != null -> { onSelectPlace(place); keyboard?.hide() }
                         }
                     }),
                     modifier = Modifier.fillMaxWidth()
@@ -133,7 +144,7 @@ fun SearchPanel(
                     .background(Panel, shape)
                     .border(1.dp, BorderGray, shape)
             ) {
-                if (results.isEmpty()) {
+                if (results.isEmpty() && placeResults.isEmpty()) {
                     Text(
                         text = appString(R.string.search_no_results),
                         color = OnPanelMuted,
@@ -142,7 +153,7 @@ fun SearchPanel(
                     )
                 } else {
                     LazyColumn(Modifier.heightIn(max = 320.dp)) {
-                        items(results, key = { it.code }) { country ->
+                        items(results, key = { "c:" + it.code }) { country ->
                             CountryRow(
                                 country = country,
                                 language = language,
@@ -157,8 +168,86 @@ fun SearchPanel(
                                 HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
                             }
                         }
+                        if (placeResults.isNotEmpty()) {
+                            item(key = "places-header") {
+                                SectionHeader(appString(R.string.search_section_cities))
+                            }
+                            items(placeResults, key = { "p:" + it.id }) { place ->
+                                PlaceRow(
+                                    place = place,
+                                    country = place.countryCode?.let { catalog[it] },
+                                    language = language,
+                                    onClick = {
+                                        onSelectPlace(place)
+                                        keyboard?.hide()
+                                    }
+                                )
+                                if (place != placeResults.last()) {
+                                    HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
+                                }
+                            }
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Separa i paesi dalle citta' nella stessa lista di risultati. */
+@Composable
+private fun SectionHeader(text: String) {
+    HorizontalDivider(color = BorderGray)
+    Text(
+        text = text.uppercase(),
+        color = OnPanelMuted,
+        fontSize = 11.sp,
+        letterSpacing = 0.8.sp,
+        modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 4.dp)
+    )
+}
+
+/**
+ * Riga di una citta'. La bandiera e il nome del paese non sono decorazione: di
+ * Springfield ce ne sono sette, e senza il paese non si sa quale si sta
+ * toccando. Restano vuoti per le tre citta' il cui ADM0_A3 non corrisponde a
+ * nessuna feature del globo.
+ */
+@Composable
+fun PlaceRow(
+    place: Place,
+    country: Country?,
+    language: AppLanguage,
+    onClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
+    ) {
+        // Larghezza fissa anche senza bandiera, cosi' i nomi restano allineati.
+        val flag = country?.flag.orEmpty()
+        Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
+            if (flag.isNotEmpty()) Text(text = flag, fontSize = 17.sp)
+        }
+        Column(Modifier.weight(1f).padding(start = 6.dp)) {
+            Text(
+                text = place.name(language),
+                color = OnPanel,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (country != null) {
+                Text(
+                    text = country.name(language),
+                    color = OnPanelMuted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

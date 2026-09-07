@@ -61,6 +61,16 @@
   .row.on .tg i { background: var(--visited); }
   .row.on .tg { border-color: var(--visited); }
   .empty { padding: 12px; font-size: 13px; color: #7b7b88; }
+  /* Citta' nella ricerca di prova: su Android questa lista non esiste, la
+     disegna Compose. Il paese sta sotto il nome invece che di fianco perche'
+     "Stati Uniti d'America" accanto a "New York" litiga per la larghezza. */
+  .sect { padding: 9px 12px 4px; font-size: 10px; letter-spacing: .8px;
+          text-transform: uppercase; color: #6f6f7d; border-top: 1px solid #23232d; }
+  .row .fl { flex: none; width: 22px; text-align: center; font-size: 15px; }
+  .row .stack { flex: 1; min-width: 0; }
+  .row .stack .nm { flex: none; }
+  .row .sub { font-size: 11px; color: #6f6f7d; overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
 
   /* Windows non ha i glifi delle bandiere: Microsoft li ha esclusi apposta da
      Segoe UI Emoji, quindi Chrome su Windows non trova la coppia di indicatori
@@ -432,12 +442,12 @@
     // Stanno qui lo stesso, cosi' se un giorno la lingua venisse spinta prima
     // funzionano senza altre modifiche.
     it: { visited: 'Visitato', visitedAria: 'Segna come visitato',
-          countries: 'paesi', noResults: 'Nessun paese trovato.',
-          searchPh: 'Cerca un paese…',
+          countries: 'paesi', noResults: 'Nessun risultato.',
+          cities: 'Città', searchPh: 'Cerca un paese o una città…',
           loadingBorders: 'Carico i confini…', buildingGlobe: 'Costruisco il globo…' },
     en: { visited: 'Visited', visitedAria: 'Mark as visited',
-          countries: 'countries', noResults: 'No country found.',
-          searchPh: 'Search a country…',
+          countries: 'countries', noResults: 'No results.',
+          cities: 'Cities', searchPh: 'Search a country or city…',
           loadingBorders: 'Loading borders…', buildingGlobe: 'Building the globe…' }
   };
   function t(key) { return (STR[lang] || STR.it)[key]; }
@@ -459,14 +469,38 @@
                                 0x1F1E6 + a2.charCodeAt(1) - 65);
   }
 
+  // Codici Natural Earth con cui una feature puo' essere nominata da un altro
+  // dataset. Servono a `cities.json`, che porta l'ADM0_A3 della citta' e deve
+  // ritrovare la chiave del paese *dell'app* - che non e' sempre la stessa
+  // stringa: per Kosovo e Somaliland la chiave e' l'ADM0_A3, per tutti gli
+  // altri l'ISO_A3. Si mandano entrambi e l'aggancio lo fa Kotlin.
+  function countryAltCodes(f) {
+    var p = f.properties || {};
+    var out = [];
+    [rawProp(p, ['ISO_A3']), rawProp(p, ['ADM0_A3'])].forEach(function (c) {
+      if (isBadCode(c)) return;
+      c = c.toUpperCase();
+      if (out.indexOf(c) < 0) out.push(c);
+    });
+    return out;
+  }
+
   // Catalogo completo, passato una volta sola a Kotlin: da qui Compose ricava
   // l'indice di ricerca e il denominatore del contatore.
+  //
+  // `flag` e `codes` servono alle citta': la riga di una citta' mostra la
+  // bandiera e il nome del suo paese, e Compose li ricava da qui invece di
+  // farsi mandare un secondo catalogo. Cosi' il ponte resta uno solo e
+  // `cities.json` lo legge Kotlin direttamente dagli asset, senza passare
+  // 300 KB di JSON attraverso la WebView.
   function catalogJson() {
     return JSON.stringify(features.map(function (f) {
       return {
         code: countryKey(f),
         nameIt: countryNameIt(f),
-        nameEn: countryNameEn(f)
+        nameEn: countryNameEn(f),
+        flag: flagEmoji(f) || '',
+        codes: countryAltCodes(f)
       };
     }));
   }
@@ -1455,6 +1489,77 @@
     return starts.concat(contains).slice(0, limit || 12);
   }
 
+  // ------------------------------------- citta' (solo per la ricerca di prova)
+  //
+  // Su Android questo catalogo NON si carica: la ricerca delle citta' la fa
+  // Compose, che legge cities.json direttamente dagli asset senza far passare
+  // 300 KB dal ponte JS->Kotlin. Qui serve soltanto perche' il prototipo nel
+  // browser resti provabile per intero, ed e' per questo che il caricamento e'
+  // agganciato a wireUi(), che gira solo quando DEMO_UI e' acceso.
+  var cities = [];          // { id, nameEn, nameIt, lat, lng, feat }
+  var cityIndex = [];       // { city, label, sub, flag, hay }
+
+  function loadCities() {
+    return fetch('cities.json')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (list) {
+        // Stessa giunzione che fa PlaceCatalog.build lato Kotlin: la citta'
+        // porta l'ADM0_A3 di Natural Earth, non la chiave dell'app.
+        var byCode = Object.create(null);
+        features.forEach(function (f) {
+          countryAltCodes(f).forEach(function (c) { if (!byCode[c]) byCode[c] = f; });
+        });
+        var orphans = 0;
+        cities = list.map(function (c) {
+          var feat = byCode[c.a] || null;
+          if (!feat) orphans++;
+          return { id: c.i, nameEn: c.n, nameIt: c.t || c.n, lat: c.y, lng: c.x, feat: feat };
+        });
+        buildCityIndex();
+        console.log('[BeenThere] catalogo citta: ' + cities.length + ' voci, ' +
+                    orphans + ' senza paese');
+      })
+      .catch(function (err) {
+        console.warn('[BeenThere] cities.json non caricato:', err.message);
+      });
+  }
+
+  // Le etichette sono gia' risolte nella lingua corrente, come per i paesi:
+  // va rifatto a ogni setLanguage().
+  function buildCityIndex() {
+    cityIndex = cities.map(function (c) {
+      var label = lang === 'en' ? c.nameEn : c.nameIt;
+      return {
+        city: c,
+        label: label,
+        sub: c.feat ? countryName(c.feat) : '',
+        flag: c.feat ? (flagEmoji(c.feat) || '') : '',
+        hay: norm(label)
+      };
+    });
+  }
+
+  // Stesso criterio di searchCountries - inizio di parola prima di meta' parola
+  // - ma senza riordinare: l'ordine del file e' per popolazione, e dentro ogni
+  // gruppo va conservato, altrimenti "new york" darebbe New York Mills.
+  function searchCities(q, limit) {
+    var n = norm(String(q || '').trim());
+    if (!n || !cityIndex.length) return [];
+    var lim = limit || 8;
+    var starts = [], contains = [];
+    for (var i = 0; i < cityIndex.length; i++) {
+      var e = cityIndex[i], pos = e.hay.indexOf(n);
+      if (pos < 0) continue;
+      if (pos === 0 || /[\s|(-]/.test(e.hay.charAt(pos - 1))) starts.push(e);
+      else contains.push(e);
+      if (starts.length >= lim) break;
+    }
+    return starts.concat(contains).slice(0, lim);
+  }
+
   function flyTo(key, ms) {
     var f = byKey[key];
     if (!f || !world) return false;
@@ -1463,6 +1568,23 @@
     // tutta la sua durata, piu' l'inerzia che segue.
     wake(dur + IDLE_GRACE_MS);
     world.pointOfView(focusOf(f), dur);
+    return true;
+  }
+
+  // Volo su una coordinata qualsiasi. Serve alle citta', che non sono feature
+  // del GeoJSON e quindi non hanno un focusOf() da cui ricavare l'inquadratura.
+  // L'altitudine e' fissa e appena sopra il limite di zoom dei controlli
+  // (minDistance 130 su un globo di raggio 100, cioe' altitudine 0,30): un
+  // valore piu' basso verrebbe comunque bloccato da OrbitControls, e la camera
+  // finirebbe a litigare con il damping a fine volo.
+  var CITY_ALT = 0.32;
+  function flyToCoords(lat, lng, ms) {
+    if (!world) return false;
+    var la = Number(lat), ln = Number(lng);
+    if (!isFinite(la) || !isFinite(ln)) return false;
+    var dur = ms == null ? 900 : ms;
+    wake(dur + IDLE_GRACE_MS);
+    world.pointOfView({ lat: la, lng: ln, altitude: CITY_ALT }, dur);
     return true;
   }
 
@@ -1475,26 +1597,69 @@
     });
   }
 
-  function renderResults(list) {
-    lastResults = list; selIdx = list.length ? 0 : -1;
-    if (!list.length) {
+  /**
+   * Paesi prima, poi le citta' in una sezione a parte. Non si mescolano: le
+   * citta' sono 4.205 contro 242, e in una lista sola il paese cercato
+   * sparirebbe in mezzo ai suoi capoluoghi.
+   *
+   * `lastResults` resta un elenco piatto, perche' e' quello su cui si muovono
+   * le frecce; l'intestazione di sezione non e' una `.row`, quindi non entra
+   * nella numerazione e le due cose restano allineate.
+   */
+  function renderResults(countryList, cityList) {
+    cityList = cityList || [];
+    lastResults = countryList.map(function (e) {
+      return { type: 'country', key: e.key };
+    }).concat(cityList.map(function (e) {
+      return { type: 'city', entry: e };
+    }));
+    selIdx = lastResults.length ? 0 : -1;
+
+    if (!lastResults.length) {
       resultsEl.innerHTML = '<div class="empty">' + escapeHtml(t('noResults')) + '</div>';
       resultsEl.classList.add('open');
       return;
     }
-    resultsEl.innerHTML = list.map(function (e, i) {
-      return '<div class="row' + (visited.has(e.key) ? ' on' : '') + (i === selIdx ? ' sel' : '') +
-             '" data-key="' + e.key + '">' +
-             '<span class="nm">' + escapeHtml(e.label) + '</span>' +
-             '<span class="cc">' + escapeHtml(e.key) + '</span>' +
-             '<button class="tg" type="button" data-toggle="1" ' +
-             'aria-label="' + escapeHtml(t('visitedAria')) + '"><i></i></button></div>';
-    }).join('');
+
+    var html = '', i = 0;
+    countryList.forEach(function (e) {
+      html += '<div class="row' + (visited.has(e.key) ? ' on' : '') + (i === selIdx ? ' sel' : '') +
+              '" data-idx="' + i + '" data-key="' + e.key + '">' +
+              '<span class="nm">' + escapeHtml(e.label) + '</span>' +
+              '<span class="cc">' + escapeHtml(e.key) + '</span>' +
+              '<button class="tg" type="button" data-toggle="1" ' +
+              'aria-label="' + escapeHtml(t('visitedAria')) + '"><i></i></button></div>';
+      i++;
+    });
+    if (cityList.length) {
+      html += '<div class="sect">' + escapeHtml(t('cities')) + '</div>';
+      cityList.forEach(function (e) {
+        html += '<div class="row city' + (i === selIdx ? ' sel' : '') + '" data-idx="' + i + '">' +
+                '<span class="fl">' + escapeHtml(e.flag) + '</span>' +
+                '<span class="stack"><span class="nm">' + escapeHtml(e.label) + '</span>' +
+                (e.sub ? '<span class="sub">' + escapeHtml(e.sub) + '</span>' : '') +
+                '</span></div>';
+        i++;
+      });
+    }
+    resultsEl.innerHTML = html;
     resultsEl.classList.add('open');
   }
+
+  /** Riga scelta con il click o con Invio. */
+  function activateResult(idx) {
+    var item = lastResults[idx];
+    if (!item) return;
+    if (item.type === 'country') { flyTo(item.key); selectCountry(item.key); }
+    else { flyToCoords(item.entry.city.lat, item.entry.city.lng); }
+    closeResults();
+    searchEl.blur();
+  }
+
   function refreshRowStates() {
     if (!resultsEl) return;
-    Array.prototype.forEach.call(resultsEl.querySelectorAll('.row'), function (r) {
+    // Solo le righe dei paesi: una citta' non ha uno stato "visitato".
+    Array.prototype.forEach.call(resultsEl.querySelectorAll('.row[data-key]'), function (r) {
       r.classList.toggle('on', visited.has(r.getAttribute('data-key')));
     });
   }
@@ -1508,10 +1673,12 @@
     searchEl = $('search');
     searchEl.placeholder = t('searchPh');
 
+    loadCities();
+
     searchEl.addEventListener('input', function () {
       var q = searchEl.value.trim();
       if (!q) { closeResults(); return; }
-      renderResults(searchCountries(q, 12));
+      renderResults(searchCountries(q, 8), searchCities(q, 8));
     });
     searchEl.addEventListener('keydown', function (ev) {
       if (!lastResults.length) return;
@@ -1523,8 +1690,7 @@
         });
       } else if (ev.key === 'Enter' && selIdx >= 0) {
         ev.preventDefault();
-        flyTo(lastResults[selIdx].key); selectCountry(lastResults[selIdx].key);
-        searchEl.blur(); closeResults();
+        activateResult(selIdx);
       } else if (ev.key === 'Escape') {
         closeResults(); searchEl.blur();
       }
@@ -1537,8 +1703,12 @@
       var row = ev.target.closest ? ev.target.closest('.row') : null;
       if (!row) return;
       var key = row.getAttribute('data-key');
-      if (ev.target.closest('[data-toggle]')) { ev.stopPropagation(); applyToggle(key); return; }
-      flyTo(key); selectCountry(key); closeResults(); searchEl.blur();
+      if (key && ev.target.closest('[data-toggle]')) {
+        ev.stopPropagation();
+        applyToggle(key);
+        return;
+      }
+      activateResult(Number(row.getAttribute('data-idx')));
     });
 
     document.addEventListener('pointerdown', function (ev) {
@@ -1738,6 +1908,12 @@
       if (ok) selectCountry(code);
       return ok;
     },
+    /**
+     * Vola su una lat/lng, senza selezionare niente: e' il tocco sulla riga di
+     * una citta' nella ricerca. La citta' non e' una feature del GeoJSON,
+     * quindi qui non c'e' nessun popup da aprire.
+     */
+    flyToCoords: function (lat, lng, ms) { return flyToCoords(lat, lng, ms); },
     /** Chiude il popup, se aperto. */
     clearSelection: function () { clearSelection(); },
     /**
@@ -1750,9 +1926,13 @@
       if (next === lang) return lang;
       lang = next;
       if (features.length) buildSearchIndex();
+      if (cities.length) buildCityIndex();
       if (searchEl) searchEl.placeholder = t('searchPh');
       updateCounter();
-      if (lastResults.length) renderResults(searchCountries(searchEl ? searchEl.value : '', 12));
+      if (lastResults.length) {
+        var q = searchEl ? searchEl.value : '';
+        renderResults(searchCountries(q, 8), searchCities(q, 8));
+      }
       refreshPopup();
       return lang;
     },

@@ -53,6 +53,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 is GlobeCommand.SetAll -> controller.setVisited(command.codes)
                 is GlobeCommand.SetOne -> controller.setCountryVisited(command.code, command.isVisited)
                 is GlobeCommand.Focus -> controller.focusCountry(command.code)
+                is GlobeCommand.FocusCoords -> controller.flyToCoords(command.lat, command.lng)
                 is GlobeCommand.SetLanguage -> controller.setLanguage(command.language.tag)
             }
         }
@@ -67,6 +68,9 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     // rifa' la ricerca.
     val results = remember(query, state.catalog, state.language) {
         state.catalog.search(query, state.language)
+    }
+    val placeResults = remember(query, state.places, state.language) {
+        state.places.search(query, state.language)
     }
 
     ProvideAppLanguage(state.language) {
@@ -104,11 +108,17 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                     query = query,
                     onQueryChange = { query = it },
                     results = results,
+                    placeResults = placeResults,
+                    catalog = state.catalog,
                     visited = state.visited,
                     language = state.language,
                     isReady = state.isReady,
                     onSelect = { country ->
                         viewModel.focus(country.code)
+                        query = ""
+                    },
+                    onSelectPlace = { place ->
+                        viewModel.focusPlace(place)
                         query = ""
                     },
                     onToggle = { country -> viewModel.toggleVisited(country.code) }

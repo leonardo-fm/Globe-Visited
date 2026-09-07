@@ -12,7 +12,14 @@ import java.util.Locale
 data class Country(
     val code: String,
     val nameIt: String,
-    val nameEn: String
+    val nameEn: String,
+    /** Bandiera emoji, costruita dal JavaScript sull'ISO_A2. Vuota per le 5 entita' senza codice ISO. */
+    val flag: String = "",
+    /**
+     * ISO_A3 e ADM0_A3 della feature. Servono ad agganciare `cities.json`, che
+     * porta l'ADM0_A3 della citta' e non conosce la chiave dell'app.
+     */
+    val altCodes: List<String> = emptyList()
 ) {
     fun name(language: AppLanguage): String = when (language) {
         AppLanguage.IT -> nameIt
@@ -50,9 +57,23 @@ class CountryCatalog(val countries: List<Country>) {
 
     private val byCode: Map<String, Country> = countries.associateBy { it.code }
 
+    /**
+     * ISO_A3/ADM0_A3 -> paese. Il primo che rivendica un codice se lo tiene: le
+     * chiavi dell'app sono gia' uniche, e un alias conteso (non ne risultano sul
+     * 50m) non deve spostare un paese gia' agganciato.
+     */
+    private val byAltCode: Map<String, Country> = buildMap {
+        for (country in countries) {
+            for (alt in country.altCodes) putIfAbsent(alt, country)
+        }
+    }
+
     val size: Int get() = countries.size
 
     operator fun get(code: String): Country? = byCode[code]
+
+    /** Paese a partire da un codice Natural Earth, per agganciare il catalogo delle citta'. */
+    fun byNaturalEarthCode(code: String): Country? = byAltCode[code]
 
     /**
      * Cerca sul nome nella lingua selezionata piu' il codice ISO. I nomi
@@ -97,7 +118,15 @@ class CountryCatalog(val countries: List<Country>) {
                 val english = obj.optString("nameEn").takeIf { it.isNotBlank() } ?: code
                 // Dove NAME_IT manca nel dataset, l'etichetta italiana ricade sull'inglese.
                 val italian = obj.optString("nameIt").takeIf { it.isNotBlank() } ?: english
-                list += Country(code = code, nameIt = italian, nameEn = english)
+                val codes = obj.optJSONArray("codes")
+                list += Country(
+                    code = code,
+                    nameIt = italian,
+                    nameEn = english,
+                    flag = obj.optString("flag"),
+                    altCodes = List(codes?.length() ?: 0) { codes!!.optString(it) }
+                        .filter { it.isNotBlank() }
+                )
             }
             return CountryCatalog(list)
         }

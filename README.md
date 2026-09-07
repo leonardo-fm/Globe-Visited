@@ -11,6 +11,8 @@ dichiara il permesso INTERNET** e non fa una sola richiesta di rete.
 
 - Tocchi un paese sul globo e si apre una card con bandiera, nome e un
   interruttore **Visitato**. La card resta agganciata al paese mentre ruoti.
+- Cerchi anche le città: capitali, capoluoghi e centri sopra i 100.000
+  abitanti, con la bandiera del loro paese. Toccarne una porta il globo lì.
 - Contatore, ricerca e lista dei visitati nella UI nativa Compose.
 - Italiano e inglese, a scelta manuale.
 - I visitati stanno in DataStore, sul telefono. Niente account, niente cloud.
@@ -74,13 +76,14 @@ il thread principale e solo il compositor continua a muovere qualcosa.
 
 ## Gli asset
 
-`app/src/main/assets/` contiene tre file versionati nel repo, perché senza di
-loro l'app non parte e non c'è rete da cui prenderli:
+`app/src/main/assets/` contiene quattro file versionati nel repo, perché senza
+di loro l'app non parte e non c'è rete da cui prenderli:
 
 | file | cos'è |
 |---|---|
 | `globe.gl.min.js` | globe.gl 2.46.2, build UMD con three incluso, 1,8 MB |
 | `countries.geojson` | Natural Earth 1:50m semplificato, 242 paesi in 1.359 poligoni, 719 KB (compresso nell'APK) |
+| `cities.json` | Natural Earth 1:10m populated places filtrato, 4.205 città, 295 KB |
 | `TwemojiCountryFlags.woff2` | font con i soli glifi delle bandiere, 78 KB, MIT |
 
 ## Note tecniche
@@ -90,3 +93,6 @@ della calotta, la scena fusa, i confini deduplicati, i piani di taglio che
 tolgono lo sfarfallio, il tocco senza raycast, bandiere su Windows, il Caspio —
 sta in [docs/note-tecniche.md](docs/note-tecniche.md). Da leggere prima di
 toccare il rendering.
+
+`tools/build-cities.mjs` rigenera `cities.json` dal dataset Natural Earth: il
+comando esatto sta nelle note.

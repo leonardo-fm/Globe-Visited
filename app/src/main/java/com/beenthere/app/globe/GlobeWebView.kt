@@ -50,6 +50,11 @@ class GlobeController {
         eval("window.BeenThere && BeenThere.focusCountry(${JSONObject.quote(code)})")
     }
 
+    /** Volo su una citta': non e' una feature del globo, quindi non c'e' niente da selezionare. */
+    fun flyToCoords(lat: Double, lng: Double) {
+        eval("window.BeenThere && BeenThere.flyToCoords($lat, $lng)")
+    }
+
     /** Lingua di nome del paese e pulsante dentro il popup disegnato dalla pagina. */
     fun setLanguage(tag: String) {
         eval("window.BeenThere && BeenThere.setLanguage(${JSONObject.quote(tag)})")

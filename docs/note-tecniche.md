@@ -16,9 +16,16 @@ npx mapshaper ne_50m_admin_0_countries.geojson -filter-fields ISO_A3,ADM0_A3,ISO
 Ne escono **242 feature, 1359 poligoni, 41.128 vertici, 719 KB**.
 
 Perché il 50m e non il 110m: a 1:110m Malta, Singapore e Maldive **non esistono
-come poligoni**, quindi non sarebbero né cliccabili né cercabili. Restano fuori
-anche dal 50m solo Vaticano, Monaco, San Marino, Liechtenstein, Andorra e alcune
-isole del Pacifico, presenti solo a 1:10m.
+come poligoni**, quindi non sarebbero né cliccabili né cercabili.
+
+**I microstati ci sono.** Vaticano, Monaco, San Marino, Liechtenstein e Andorra
+sono nel file, ed è merito di `keep-shapes`: senza, la semplificazione li
+cancellerebbe. Ma sono poligoni di **quattro punti larghi pochi chilometri**, il
+Vaticano circa 1×1 km, quindi sul globo valgono una manciata di pixel. Esistono,
+si cercano e si segnano dalla lista — col dito sul globo non si prendono. Non è
+un difetto del dataset: è il limite fisico di un bersaglio grande un pixel, e la
+via d'uscita sarebbe una tolleranza al tocco, non più risoluzione. (Una versione
+precedente di questa nota diceva che erano assenti dal 50m: era falso.)
 
 `keep-shapes` impedisce che le isole minori spariscano nella semplificazione,
 `-clean` ripara le auto-intersezioni che la semplificazione introduce.
@@ -65,6 +72,57 @@ collidono sulla stessa chiave.
 
 **Contatore.** Il denominatore è il numero di poligoni del dataset (~242), non
 195: Natural Earth include territori non sovrani e non coincide con la lista ONU.
+
+## Il catalogo delle città
+
+`cities.json` è Natural Earth Admin 0 1:10m *populated places*, filtrato e
+ridotto da `tools/build-cities.mjs`. Per rigenerarlo:
+
+```
+curl -O https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_populated_places.geojson
+
+node tools/build-cities.mjs ne_10m_populated_places.geojson app/src/main/assets/cities.json
+```
+
+Il filtro tiene **capitali di stato, capoluoghi di regione e tutto quello che
+supera i 100.000 abitanti**: ne escono **4.205 città sulle 7.342 del dataset,
+295 KB**, distribuite su 223 codici paese.
+
+Tre scelte che riducono il file senza perdere niente:
+
+- **il nome italiano si scrive solo dove differisce dall'inglese.** Succede 735
+  volte su 4.205 (Firenze, Venezia, Città del Vaticano); nelle altre ripeterlo
+  raddoppierebbe il campo per niente. Chi legge ricade sul nome inglese, la
+  stessa regola che vale per `NAME_IT` nei paesi;
+- **coordinate a tre decimali**, cioè ~110 m: il pin è un puntino su un globo,
+  e a zoom massimo un pixel vale già più di un chilometro;
+- **l'ordine del file è per popolazione decrescente**, e la ricerca lo conserva
+  dentro ogni gruppo di match invece di riordinare alfabeticamente. È il motivo
+  per cui cercando "new york" esce prima New York City e non New York Mills.
+
+L'id è `<ADM0_A3>:<nome ascii>` — `USA:new-york` — con un contatore in coda per
+le 29 omonimie interne allo stesso paese. È **stabile fra rigenerazioni**: un
+luogo salvato in DataStore non si rompe se un giorno il file si rigenera.
+
+**Il file lo legge Kotlin, non la WebView.** È l'opposto di quello che succede
+per i paesi, ed è deliberato: il globo non ha bisogno del catalogo (riceve solo
+i luoghi che l'utente ha piantato, poche decine), mentre la ricerca è tutta
+nativa. Farlo passare dal ponte JS→Kotlin significherebbe leggerlo e
+serializzarlo due volte per far arrivare 300 KB dove possono arrivare da soli.
+
+Resta però un problema di identità: la città porta l'`ADM0_A3` di Natural Earth,
+non la chiave con cui l'app identifica i paesi (`ISO_A3 → ADM0_A3 → nome
+normalizzato`, vedi *Identificazione dei paesi*). L'aggancio si fa **dentro il
+catalogo dei paesi**, che ora porta anche `codes` — l'ISO_A3 e l'ADM0_A3 della
+feature — e `flag`. Così il ponte resta uno solo e la chiave continua a nascere
+in un posto solo. Verificato sul 50m: **nessun codice è conteso** fra due paesi,
+e solo **3 città su 4.205** (Gibilterra, Svalbard, Tokelau) portano un codice che
+non corrisponde a nessuna feature: restano cercabili, senza bandiera.
+
+Non si è usato `countryAt()` per dedurre il paese dalle coordinate, che pure
+esiste già ed è esatto: una città sul mare può cadere **fuori** dal poligono del
+suo paese quando la costa è semplificata — è la stessa trappola di Nuuk descritta
+sopra — mentre il codice del dataset non ha quel problema.
 
 ## Verso degli anelli del GeoJSON
 
@@ -440,7 +498,17 @@ schermo sopra la UI Compose, raddoppiando contatore e campo di ricerca.
 
 **Ricerca.** Cerca sul nome nella lingua selezionata più il codice ISO, senza
 distinguere accenti. Per gli stati insulari troppo piccoli da colpire con il
-dito, il pallino a destra di ogni risultato è la via di selezione.
+dito, il pallino a destra di ogni risultato è la via di selezione. Le città
+stanno in una sezione a parte sotto i paesi, non mescolate: sono 4.205 contro
+242, e in una lista sola il paese cercato sparirebbe fra i suoi capoluoghi.
+
+**La ricerca esiste due volte.** Quella vera è Compose; dentro `index.html` ce
+n'è una seconda, accesa solo quando manca il ponte Android (`DEMO_UI`), perché
+il prototipo nel browser resti provabile per intero. È l'unico posto in cui il
+JavaScript carica `cities.json`: su Android quel file non passa mai dalla
+WebView. Le due ricerche vanno tenute allineate a mano - stesso ordine, stessa
+regola dell'inizio di parola, stesse sezioni - e la copia JS resta quella
+sacrificabile se un giorno divergono.
 
 **Lingua.** Selettore manuale IT/EN nella bottom sheet, salvato in DataStore. Non
 passa dal locale di sistema perché `LocaleManager` è API 33+ e qui minSdk è 26:

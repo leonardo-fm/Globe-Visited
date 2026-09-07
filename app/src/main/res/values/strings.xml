@@ -4,10 +4,11 @@
 
     <string name="counter">%1$d / %2$d paesi</string>
     <string name="counter_loading">Caricamento…</string>
-    <string name="search_placeholder">Cerca un paese…</string>
+    <string name="search_placeholder">Cerca un paese o una città…</string>
     <string name="search_placeholder_loading">Attendi il globo…</string>
     <string name="search_clear">Cancella la ricerca</string>
-    <string name="search_no_results">Nessun paese trovato.</string>
+    <string name="search_no_results">Nessun risultato.</string>
+    <string name="search_section_cities">Città</string>
 
     <string name="visited_title">Paesi visitati</string>
     <string name="visited_empty">Nessun paese ancora. Tocca uno stato sul globo e accendi Visitato nel popup, oppure cercalo e usa il pallino a destra.</string>
