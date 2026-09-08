@@ -67,6 +67,22 @@ prova sull'S10e - in particolare il fuoco della ricerca, lo sfarfallio a globo
 piccolo con le quote abbassate, e il giro esporta -> disinstalla -> reinstalla ->
 importa - e il commit.
 
+**2026-09-08, due difetti trovati usando l'app**, corretti in
+`ui/SearchPanel.kt` e ancora da provare sul telefono. (1) Nella riga di una
+citta' il nome e il paese sembravano attaccati: le due righe erano impilate
+senza spazio, ora c'e' `Arrangement.spacedBy(3.dp)` e `lineHeight` fissata su
+entrambe. (2) La ricerca continuava a non azzerarsi, ed e' il punto che conta:
+azzerarla **sul fuoco non puo' funzionare**, perche' toccando il globo il fuoco
+lo prende la WebView senza che Compose se ne accorga - per Compose il campo non
+lo perde mai, quindi ritoccandolo non c'e' nessun cambio da notificare e
+`onFocusChanged` non parte. Ora si guarda il **tocco** (`pointerInput` +
+`awaitFirstDown(requireUnconsumed = false)` sul contenitore della barra), che
+arriva sempre. Prezzo detto all'utente: toccare il campo a meta' parola
+riazzera anche mentre si scrive.
+
+Da qui e' nato [[banco-di-prova-web]], per provare i flussi nel browser prima
+di passare al telefono.
+
 L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.
 La verifica possibile da questa macchina resta quella descritta in
 [[ambiente-senza-toolchain-android]].

@@ -1,0 +1,1224 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Been There — banco di prova</title>
+
+<!--
+  BANCO DI PROVA — non fa parte dell'app, non finisce nell'APK.
+
+  Sta fuori da app/src/main/assets apposta: tutto quello che sta in assets/
+  viene impacchettato nell'APK, e questo file non ci deve entrare.
+
+  A cosa serve
+  ------------
+  Nel browser index.html si accorge di non avere il ponte Android
+  (`HAS_NATIVE`, riga ~439) e accende un prototipo suo: barra di ricerca HTML,
+  citta' caricate dalla pagina, stato in localStorage. Comodo, ma e' un ALTRO
+  ramo di codice rispetto a quello che gira sul telefono: sul telefono la
+  chrome HTML resta spenta e comanda Compose.
+
+  Questa pagina inietta un AndroidBridge FINTO nella pagina prima che i suoi
+  script partano. Cosi' index.html crede di stare dentro la WebView, spegne il
+  suo prototipo e si comporta esattamente come sul telefono - e la parte di
+  Compose (contatore, ricerca, sheet, dialoghi, backup) la rifa' questa pagina
+  in HTML, con lo stesso aspetto e le stesse regole.
+
+  Cosa NON prova
+  --------------
+  E' una SECONDA implementazione: la verita' resta il Kotlin in app/src/main/java.
+  Qui provi i flussi e la logica, non la fedelta'. I difetti che nascono da
+  Compose stesso - il fuoco che passa alla WebView, lo spazio fra due righe di
+  testo - non compaiono qui. Quelli si vedono solo sull'S10e.
+
+  Come si apre
+  ------------
+  Il server va lanciato dalla RADICE del repo, non dagli assets:
+      python -m http.server 8000        (in D:\Projects\Globe-Visited)
+      http://localhost:8000/dev/harness.html
+-->
+
+<style>
+  /* Palette identica a ui/theme/Theme.kt: se cambia li', cambia qui. */
+  :root {
+    --visited:      #FF8C1A;
+    --place-pin:    #E8E8EE;
+    --land:         #8A8A8A;
+    --border:       #33333A;
+    --background:   #05070F;
+    --panel:        rgba(10, 14, 26, 0.90);   /* Panel = 0xE60A0E1A */
+    --panel-solid:  #0A0E1A;
+    --on-panel:     #E8E8EE;
+    --on-muted:     #8E8E9C;
+    --font: "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+
+  /* Le bandiere: su Windows Chrome non disegna le coppie di lettere regionali,
+     e si vedrebbe "KE" invece di 🇰🇪. Sul telefono ci pensa il font di sistema;
+     qui si presta lo stesso woff2 che index.html usa per le sue. */
+  @font-face {
+    font-family: "Twemoji Country Flags";
+    src: url("/app/src/main/assets/TwemojiCountryFlags.woff2") format("woff2");
+    font-display: swap;
+    unicode-range: U+1F1E6-1F1FF;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #15161c;
+    color: var(--on-panel);
+    font-family: var(--font);
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    align-items: flex-start;
+  }
+
+  /* ------------------------------------------------------ telaio del device */
+  #device {
+    position: relative;
+    width: 412px;                       /* larghezza tipica di un S10e in dp */
+    height: min(915px, calc(100vh - 32px));
+    flex: none;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    overflow: hidden;
+  }
+  #device.full { width: calc(100vw - 300px); }
+  #globe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+  /* L'overlay copre il globo ma non gli ruba i tocchi: solo i pannelli veri
+     riprendono i puntatori, come la Column di Compose sopra la WebView. */
+  #overlay { position: absolute; inset: 0; pointer-events: none; }
+  #overlay > * { pointer-events: auto; }
+
+  #topbar {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 12px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+    max-width: 520px;
+  }
+
+  /* ---------------------------------------------------- CounterChip.kt */
+  #chip {
+    font: 600 15px var(--font);
+    color: var(--on-panel);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  #chip:disabled { cursor: default; }
+  #chip b { color: var(--visited); font-weight: 700; }
+
+  /* ---------------------------------------------------- SearchPanel.kt */
+  #panel { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+
+  #bar {
+    display: flex; align-items: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
+  #bar.active { border-color: var(--visited); }
+  #bar .icon { width: 20px; height: 20px; flex: none; color: var(--on-muted); }
+  #bar .field { flex: 1; padding: 0 10px; }
+  #bar input {
+    width: 100%;
+    background: none; border: 0; outline: none;
+    color: var(--on-panel);
+    font: 15px var(--font);
+    caret-color: var(--visited);
+  }
+  #bar input::placeholder { color: var(--on-muted); }
+  #clear { display: none; cursor: pointer; }
+  #bar.active #clear { display: block; }
+
+  #results {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  #results[hidden] { display: none; }
+
+  .row { display: flex; align-items: center; cursor: pointer; }
+  .row:not(:last-child) + .row { border-top: 1px solid rgba(51, 51, 58, 0.5); }
+
+  /* CountryRow: nome a sinistra, codice ISO, pallino. */
+  .row.country { padding: 6px 8px 6px 14px; }
+  .row.country .name { flex: 1; font-size: 15px; color: var(--on-panel);
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.country .code { font-size: 11px; color: var(--on-muted); padding: 0 8px; }
+
+  /* PlaceRow: le due righe vanno staccate a mano, altrimenti il nome della
+     citta' sembra attaccato al paese (era il difetto trovato sul telefono). */
+  .row.place { padding: 7px 8px 7px 14px; }
+  .row.place .flag { width: 26px; flex: none; text-align: center; font-size: 17px;
+                     font-family: "Twemoji Country Flags", "Noto Color Emoji", var(--font); }
+  .row.place .labels { flex: 1; min-width: 0; padding-left: 10px;
+                       display: flex; flex-direction: column; gap: 3px; }
+  .row.place .name { font-size: 15px; line-height: 17px; color: var(--on-panel);
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.place .sub  { font-size: 11px; line-height: 12px; color: var(--on-muted);
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* VisitedDot.kt */
+  .dot {
+    width: 40px; height: 40px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: none; cursor: pointer;
+  }
+  .dot i { width: 14px; height: 14px; border-radius: 50%; background: var(--land);
+           transition: background-color .18s; display: block; }
+  .dot.on { border-color: var(--visited); }
+  .dot.on i { background: var(--visited); }
+  .dot.pin.on { border-color: var(--place-pin); }
+  .dot.pin.on i { background: var(--place-pin); }
+
+  .section {
+    border-top: 1px solid var(--border);
+    padding: 10px 14px 4px;
+    font-size: 11px; letter-spacing: .8px; text-transform: uppercase;
+    color: var(--on-muted);
+  }
+  .empty { padding: 16px; }
+  .empty p { margin: 0; font-size: 14px; color: var(--on-muted); }
+  .ghost {
+    display: inline-block; margin-top: 12px;
+    font-size: 14px; color: var(--on-panel);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 12px; cursor: pointer; background: none;
+  }
+
+  /* ---------------------------------------------------- VisitedSheet.kt */
+  #scrim { position: absolute; inset: 0; background: rgba(0,0,0,.4); }
+  #sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    max-height: 70%;
+    background: var(--panel-solid);
+    border-radius: 28px 28px 0 0;
+    display: flex; flex-direction: column;
+    padding-top: 8px;
+  }
+  #sheet .handle { width: 32px; height: 4px; border-radius: 2px;
+                   background: var(--on-muted); margin: 8px auto 16px; }
+  #sheet .head { display: flex; align-items: center; padding: 0 20px 12px; gap: 8px; }
+  #sheet .head .titles { flex: 1; }
+  #sheet .title { font-size: 18px; font-weight: 600; }
+  #sheet .count { font-size: 13px; color: var(--on-muted); }
+  #sheet .actions { display: flex; gap: 8px; padding: 0 20px 12px; }
+  .sheet-action { font-size: 13px; color: var(--on-panel); background: none;
+                  border: 1px solid var(--border); border-radius: 10px;
+                  padding: 8px 12px; cursor: pointer; }
+  .lang { display: flex; gap: 8px; }
+  .lang button {
+    font: 13px var(--font); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+    background: none; border: 1px solid var(--border); color: var(--on-muted);
+  }
+  .lang button.on { background: var(--visited); color: var(--panel-solid); border-color: var(--visited); }
+  #sheet .divider { border-top: 1px solid var(--border); }
+  #sheet .list { overflow-y: auto; padding: 4px 0; }
+  #sheet .none { padding: 20px; font-size: 14px; color: var(--on-muted); }
+
+  /* ---------------------------------------------------- AlertDialog (M3) */
+  #modal { position: absolute; inset: 0; background: rgba(0,0,0,.5);
+           display: flex; align-items: center; justify-content: center; padding: 24px; }
+  /* Il `display: flex` qui sopra e' una regola d'autore e batte la
+     `[hidden] { display: none }` del browser a prescindere dalla specificita':
+     senza questa riga il dialogo nascosto resta steso su tutto il device e si
+     prende ogni click, globo compreso. */
+  #modal[hidden] { display: none; }
+  .dialog { width: 100%; background: var(--panel-solid); border-radius: 28px; padding: 24px; }
+  .dialog h2 { margin: 0 0 16px; font-size: 17px; font-weight: 500; }
+  .dialog p { margin: 0; font-size: 14px; line-height: 20px; }
+  .dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+  .dialog .buttons button { background: none; border: 0; cursor: pointer;
+                            font: 500 14px var(--font); padding: 10px 12px; border-radius: 20px; }
+  .btn-confirm { color: var(--visited); }
+  .btn-confirm.off { color: var(--on-muted); }
+  .btn-cancel { color: var(--on-muted); }
+
+  /* OutlinedTextField, in versione ridotta: bordo + etichetta sopra. */
+  .field-out { margin-bottom: 10px; }
+  .field-out label { display: block; font-size: 12px; color: var(--on-muted); margin-bottom: 4px; }
+  .field-out input {
+    width: 100%; background: none; color: var(--on-panel);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 12px; font: 15px var(--font); outline: none; caret-color: var(--visited);
+  }
+  .field-out input:focus { border-color: var(--visited); }
+  .field-out input:focus + .hint, .field-out input:focus ~ label { color: var(--visited); }
+  .field-out.bad input { border-color: var(--visited); }
+  .field-error { font-size: 12px; color: var(--visited); margin-top: 6px; }
+
+  /* Toast Android */
+  #toast {
+    position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%);
+    background: #2b2b31; color: #fff; font-size: 14px;
+    padding: 12px 18px; border-radius: 24px; max-width: 80%;
+  }
+
+  /* ------------------------------------------------------ striscia di lavoro */
+  #dev { flex: 1; min-width: 240px; font-size: 12px; color: #b9b9c6; }
+  #dev h1 { font-size: 13px; margin: 0 0 4px; color: #fff; }
+  #dev .note { color: #7d7d8c; line-height: 1.5; margin: 0 0 12px; }
+  #dev .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  #dev button, #dev select {
+    font: 12px var(--font); background: #22232b; color: #d5d5df;
+    border: 1px solid #3a3b45; border-radius: 6px; padding: 5px 9px; cursor: pointer;
+  }
+  #log { background: #101116; border: 1px solid #2a2b33; border-radius: 8px;
+         padding: 8px; height: calc(100vh - 220px); overflow-y: auto;
+         font-family: Consolas, monospace; font-size: 11px; line-height: 1.6; }
+  #log div { white-space: pre-wrap; word-break: break-all; }
+  #log .out { color: #7fb2ff; }   /* harness -> globo  (evaluateJavascript) */
+  #log .in  { color: #ffc46b; }   /* globo -> harness  (AndroidBridge)      */
+  #log .err { color: #ff7f7f; }
+</style>
+</head>
+
+<body>
+
+<div id="device">
+  <iframe id="globe" title="Globo"></iframe>
+
+  <div id="overlay">
+    <div id="topbar">
+      <button id="chip" disabled></button>
+
+      <div id="panel">
+        <div id="bar">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
+          </svg>
+          <div class="field"><input id="q" type="text" autocomplete="off" disabled></div>
+          <svg id="clear" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </div>
+        <div id="results" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="scrim" hidden></div>
+  <div id="sheet" hidden></div>
+  <div id="modal" hidden></div>
+  <div id="toast" hidden></div>
+</div>
+
+<aside id="dev">
+  <h1>Banco di prova</h1>
+  <p class="note">
+    Il globo qui sotto gira nel modo <b>Android</b>: gli ho iniettato un
+    AndroidBridge finto, quindi il suo prototipo HTML resta spento e comanda
+    questa pagina, come fa Compose sul telefono.<br>
+    Quello che vedi intorno al globo e' una <b>replica</b> della UI Compose:
+    i flussi sono gli stessi, la fedelta' no.
+  </p>
+  <div class="tools">
+    <select id="viewport">
+      <option value="phone">telefono 412×915</option>
+      <option value="full">a tutta larghezza</option>
+    </select>
+    <button id="reload">ricarica il globo</button>
+    <button id="wipe">azzera i dati</button>
+    <button id="seed">dati finti</button>
+    <button id="clearlog">pulisci log</button>
+  </div>
+  <div id="log"></div>
+</aside>
+
+<input id="file" type="file" accept="*/*" hidden>
+
+<script>
+(function () {
+  'use strict';
+
+  var ASSETS = '/app/src/main/assets/';
+  var RES    = '/app/src/main/res/';
+
+  // Chiavi separate da quelle del prototipo ('beenthere.visited.demo'): il
+  // banco di prova non deve pasticciare i dati con cui hai giocato prima.
+  var LS = {
+    visited: 'beenthere.harness.visited',
+    places:  'beenthere.harness.places',
+    lang:    'beenthere.harness.lang'
+  };
+
+  // ------------------------------------------------------------------ stato
+  // Corrisponde a UiState + MainViewModel: qui vive la "verita'", come
+  // DataStore sul telefono. Il globo e' solo il disegno.
+  var S = {
+    ready: false,
+    catalog: [],            // [{code, nameIt, nameEn, flag, codes}]
+    byCode: {},
+    byAlt: {},              // ISO_A3 / ADM0_A3 -> paese
+    cityRaw: null,          // cities.json grezzo
+    placeCatalog: [],       // [{id,nameIt,nameEn,lat,lng,cc}]
+    placeById: {},
+    visited: new Set(),
+    places: [],             // luoghi sul globo (catalogo + custom)
+    lang: 'it',
+    query: '',
+    draft: null,
+    pendingImport: null,
+    sheetOpen: false
+  };
+
+  var STR = { it: {}, en: {} };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var frame = $('globe');
+
+  // ------------------------------------------------------------------- log
+  function log(kind, text) {
+    var box = $('log');
+    var line = document.createElement('div');
+    line.className = kind;
+    line.textContent = text;
+    box.appendChild(line);
+    while (box.childNodes.length > 300) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // -------------------------------------------------------------- stringhe
+  // Lette dalle STESSE res/values dell'app invece di ricopiarle: le stringhe
+  // sono l'unica cosa che qui non puo' andare alla deriva.
+  function loadStrings() {
+    var jobs = [['it', RES + 'values/strings.xml'], ['en', RES + 'values-en/strings.xml']];
+    return Promise.all(jobs.map(function (job) {
+      return fetch(job[1]).then(function (r) { return r.text(); }).then(function (text) {
+        var doc = new DOMParser().parseFromString(text, 'application/xml');
+        var map = {};
+        Array.prototype.forEach.call(doc.getElementsByTagName('string'), function (node) {
+          map[node.getAttribute('name')] = unescapeAndroid(node.textContent);
+        });
+        STR[job[0]] = map;
+      });
+    }));
+  }
+
+  function unescapeAndroid(value) {
+    return String(value)
+      .replace(/\\'/g, "'")
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, '\n');
+  }
+
+  /** appString(): stessa sostituzione di %1$d / %2$s che fa Resources.getString. */
+  function t(key) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var raw = (STR[S.lang] && STR[S.lang][key]) || (STR.it && STR.it[key]) || key;
+    return raw.replace(/%(\d+)\$[sd]/g, function (m, n) {
+      var v = args[Number(n) - 1];
+      return v === undefined ? m : String(v);
+    });
+  }
+
+  // ---------------------------------------------------------- ricerca (Kotlin)
+  var DIACRITICS = new RegExp('[' + String.fromCharCode(768) + '-' + String.fromCharCode(879) + ']', 'g');
+
+  /** normalizeForSearch di Country.kt: minuscole senza accenti. */
+  function norm(value) {
+    return String(value).normalize('NFD').replace(DIACRITICS, '').toLowerCase();
+  }
+
+  function isLetterOrDigit(ch) { return /[\p{L}\p{N}]/u.test(ch); }
+
+  /** CountryCatalog.search: inizio di parola prima di meta' parola, poi alfabetico. */
+  function searchCountries(query, limit) {
+    var q = norm(String(query).trim());
+    if (!q) return [];
+    var wordStart = [], inside = [];
+    S.catalog.forEach(function (c) {
+      var hay = norm(nameOf(c) + ' ' + c.code);
+      var pos = hay.indexOf(q);
+      if (pos < 0) return;
+      if (pos === 0 || !isLetterOrDigit(hay.charAt(pos - 1))) wordStart.push(c);
+      else inside.push(c);
+    });
+    var byName = function (a, b) { return norm(nameOf(a)) < norm(nameOf(b)) ? -1 : 1; };
+    wordStart.sort(byName);
+    inside.sort(byName);
+    return wordStart.concat(inside).slice(0, limit || 25);
+  }
+
+  /** PlaceCatalog.search: stesso criterio, ma l'ordine del file (popolazione) resta. */
+  function searchCities(query, limit) {
+    var q = norm(String(query).trim());
+    if (!q) return [];
+    var cap = limit || 25;
+    var wordStart = [], inside = [];
+    for (var i = 0; i < S.placeCatalog.length; i++) {
+      var p = S.placeCatalog[i];
+      var hay = norm(placeName(p));
+      var pos = hay.indexOf(q);
+      if (pos < 0) continue;
+      if (pos === 0 || !isLetterOrDigit(hay.charAt(pos - 1))) wordStart.push(p);
+      else inside.push(p);
+      if (wordStart.length >= cap) break;
+    }
+    return wordStart.concat(inside).slice(0, cap);
+  }
+
+  /** PlaceCatalog.searchAmong: i pin a mano, che in cities.json non ci sono. */
+  function searchMine(query) {
+    var q = norm(String(query).trim());
+    if (!q) return [];
+    return S.places.filter(function (p) {
+      return p.custom && norm(placeName(p)).indexOf(q) >= 0;
+    }).sort(function (a, b) { return norm(placeName(a)) < norm(placeName(b)) ? -1 : 1; });
+  }
+
+  function nameOf(country) { return S.lang === 'en' ? country.nameEn : country.nameIt; }
+  function placeName(place) { return S.lang === 'en' ? place.nameEn : place.nameIt; }
+  function isPinned(id) { return S.places.some(function (p) { return p.id === id; }); }
+
+  // ------------------------------------------------------- ponte verso il globo
+  // Sono le stesse 8 chiamate che GlobeWebView.kt manda con evaluateJavascript.
+  function globe() {
+    var w = frame.contentWindow;
+    return (w && w.BeenThere) ? w.BeenThere : null;
+  }
+
+  function call(name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var g = globe();
+    if (!g || typeof g[name] !== 'function') { log('err', 'globo non pronto: ' + name); return null; }
+    log('out', '→ ' + name + '(' + args.map(brief).join(', ') + ')');
+    try { return g[name].apply(g, args); }
+    catch (e) { log('err', 'errore in ' + name + ': ' + e.message); return null; }
+  }
+
+  function brief(v) {
+    if (Array.isArray(v)) return '[' + v.length + ' voci]';
+    if (v && typeof v === 'object') return JSON.stringify(v).slice(0, 60);
+    return JSON.stringify(v);
+  }
+
+  /**
+   * GlobeController.resolveCountry: su Android e' evaluateJavascript con
+   * callback, quindi la risposta NON arriva nello stesso giro. Qui si rimanda
+   * apposta, altrimenti un ordine sbagliato che sul telefono si vedrebbe qui
+   * passerebbe liscio.
+   */
+  function resolveCountry(lat, lng, cb) {
+    setTimeout(function () {
+      var code = call('countryAt', lat, lng);
+      cb(code ? String(code) : null);
+    }, 0);
+  }
+
+  function placeJson(p) {
+    return { id: p.id, nameIt: p.nameIt, nameEn: p.nameEn, lat: p.lat, lng: p.lng,
+             cc: p.cc || null, custom: !!p.custom };
+  }
+  function pushPlaces() { call('setPlaces', S.places.map(placeJson)); }
+
+  // ------------------------------------------------------- ponte dal globo
+  // GlobeBridge.kt. Ogni metodo la' rimbalza sul main thread con Handler.post:
+  // qui si rimanda con setTimeout per la stessa ragione, cosi' il globo non
+  // si ritrova a rientrare in se stesso mentre e' ancora dentro una sua
+  // funzione.
+  function post(fn) { setTimeout(fn, 0); }
+
+  window.__bridge = {
+    onGlobeReady: function (catalogJson) {
+      log('in', '← onGlobeReady(' + catalogJson.length + ' byte)');
+      post(function () { onGlobeReady(catalogJson); });
+    },
+    onCountryToggled: function (code, isVisited) {
+      log('in', '← onCountryToggled(' + code + ', ' + isVisited + ')');
+      post(function () {
+        if (isVisited) S.visited.add(code); else S.visited.delete(code);
+        save();
+        renderChip(); renderResults(); if (S.sheetOpen) renderSheet();
+      });
+    },
+    onPlaceRemoved: function (id) {
+      log('in', '← onPlaceRemoved(' + id + ')');
+      post(function () {
+        S.places = S.places.filter(function (p) { return p.id !== id; });
+        save();
+        renderResults();
+      });
+    },
+    onPlaceAdded: function (id) {
+      log('in', '← onPlaceAdded(' + id + ')');
+      post(function () {
+        var place = S.placeById[id];
+        if (!place) return;
+        addPlace(place);
+        pushPlaces();
+        renderResults();
+      });
+    },
+    onPlaceRequested: function (lat, lng, cc) {
+      log('in', '← onPlaceRequested(' + lat + ', ' + lng + ', "' + cc + '")');
+      post(function () {
+        S.draft = { name: '', lat: lat, lng: lng, cc: cc || null };
+        renderModal();
+      });
+    }
+  };
+
+  // ------------------------------------------------------------ persistenza
+  function save() {
+    try {
+      localStorage.setItem(LS.visited, JSON.stringify(Array.from(S.visited)));
+      localStorage.setItem(LS.places, JSON.stringify(S.places.map(placeJson)));
+      localStorage.setItem(LS.lang, S.lang);
+    } catch (e) { log('err', 'salvataggio fallito: ' + e.message); }
+  }
+
+  function load() {
+    try {
+      var v = JSON.parse(localStorage.getItem(LS.visited) || '[]');
+      S.visited = new Set(Array.isArray(v) ? v : []);
+      var p = JSON.parse(localStorage.getItem(LS.places) || '[]');
+      S.places = (Array.isArray(p) ? p : []).map(placeFromJson).filter(Boolean);
+      S.lang = localStorage.getItem(LS.lang) === 'en' ? 'en' : 'it';
+    } catch (e) { log('err', 'lettura fallita: ' + e.message); }
+  }
+
+  /** Place.fromJson: senza id o senza coordinate valide la voce si butta. */
+  function placeFromJson(obj) {
+    if (!obj || !obj.id) return null;
+    var en = obj.nameEn || obj.id;
+    var lat = Number(obj.lat), lng = Number(obj.lng);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    return { id: String(obj.id), nameIt: obj.nameIt || en, nameEn: en,
+             lat: lat, lng: lng, cc: obj.cc || null, custom: !!obj.custom };
+  }
+
+  function addPlace(place) {
+    if (!isPinned(place.id)) S.places = S.places.concat([place]);
+    save();
+  }
+
+  // ------------------------------------------------------------- avvio
+  function onGlobeReady(catalogJson) {
+    var parsed = [];
+    try { parsed = JSON.parse(catalogJson); }
+    catch (e) { log('err', 'catalogo non leggibile: ' + e.message); }
+
+    S.catalog = parsed;
+    S.byCode = {};
+    S.byAlt = {};
+    parsed.forEach(function (c) {
+      S.byCode[c.code] = c;
+      (c.codes || []).forEach(function (alt) {
+        if (alt && !S.byAlt[alt]) S.byAlt[alt] = c;   // il primo che rivendica se lo tiene
+      });
+    });
+
+    buildPlaceCatalog();
+    S.ready = true;
+
+    // Stesso ordine di MainViewModel.onGlobeReady.
+    call('setLanguage', S.lang);
+    call('setVisited', Array.from(S.visited));
+    pushPlaces();
+
+    renderAll();
+  }
+
+  /**
+   * PlaceCatalog.build: la citta' porta l'ADM0_A3 di Natural Earth, non la
+   * chiave dell'app, e l'aggancio passa da byNaturalEarthCode.
+   */
+  function buildPlaceCatalog() {
+    if (!S.cityRaw || !S.catalog.length) return;
+    var out = [];
+    S.cityRaw.forEach(function (o) {
+      if (!o || !o.i || !o.n) return;
+      var lat = Number(o.y), lng = Number(o.x);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      var country = o.a ? S.byAlt[o.a] : null;
+      out.push({ id: o.i, nameEn: o.n, nameIt: o.t || o.n, lat: lat, lng: lng,
+                 cc: country ? country.code : null });
+    });
+    S.placeCatalog = out;
+    S.placeById = {};
+    out.forEach(function (p) { S.placeById[p.id] = p; });
+    log('out', 'catalogo citt\u00e0: ' + out.length + ' voci');
+  }
+
+  /**
+   * Carica index.html a mano e ci infila DAVANTI il ponte finto.
+   *
+   * Non basta assegnarlo dopo: la pagina legge `window.AndroidBridge` mentre i
+   * suoi script partono (HAS_NATIVE), e se a quel punto non c'e' accende il
+   * prototipo. Il <base> serve perche' con srcdoc gli indirizzi relativi -
+   * globe.gl.min.js, countries.geojson, il woff2 delle bandiere - andrebbero
+   * a finire su /dev/.
+   */
+  function bootGlobe() {
+    return fetch(ASSETS + 'index.html').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' su index.html');
+      return r.text();
+    }).then(function (html) {
+      var inject = '<base href="' + location.origin + ASSETS + '">'
+                 + '<script>window.AndroidBridge = parent.__bridge;<\/script>';
+      if (/<head[^>]*>/i.test(html)) html = html.replace(/<head[^>]*>/i, function (m) { return m + inject; });
+      else html = inject + html;
+      frame.srcdoc = html;
+    });
+  }
+
+  // ------------------------------------------------------------ disegno
+  function renderAll() {
+    renderChip();
+    renderSearch();
+    renderResults();
+    renderSheet();
+    renderModal();
+  }
+
+  function renderChip() {
+    var chip = $('chip');
+    chip.disabled = !S.ready;
+    if (!S.ready) { chip.textContent = t('counter_loading'); return; }
+    var text = t('counter', S.visited.size, S.catalog.length);
+    // Il numero dei visitati va in arancione ovunque cada nella frase tradotta.
+    var needle = String(S.visited.size);
+    var at = text.indexOf(needle);
+    chip.textContent = '';
+    if (at < 0) { chip.textContent = text; return; }
+    chip.appendChild(document.createTextNode(text.slice(0, at)));
+    var b = document.createElement('b');
+    b.textContent = needle;
+    chip.appendChild(b);
+    chip.appendChild(document.createTextNode(text.slice(at + needle.length)));
+  }
+
+  function renderSearch() {
+    var input = $('q');
+    input.disabled = !S.ready;
+    input.placeholder = S.ready ? t('search_placeholder') : t('search_placeholder_loading');
+    $('bar').classList.toggle('active', S.query.length > 0);
+  }
+
+  function renderResults() {
+    var box = $('results');
+    $('bar').classList.toggle('active', S.query.length > 0);
+
+    if (!S.query) { box.hidden = true; box.textContent = ''; return; }
+
+    var countries = searchCountries(S.query, 25);
+    // I pin a mano vanno per primi: uno piantato per sbaglio in mezzo al
+    // Pacifico non si ritroverebbe altrimenti.
+    var seen = {};
+    var places = searchMine(S.query).concat(searchCities(S.query, 25))
+      .filter(function (p) { if (seen[p.id]) return false; seen[p.id] = 1; return true; });
+
+    box.hidden = false;
+    box.textContent = '';
+
+    if (!countries.length && !places.length) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      var p = document.createElement('p');
+      p.textContent = t('search_no_results');
+      var btn = document.createElement('button');
+      btn.className = 'ghost';
+      btn.textContent = t('place_create_here');
+      btn.onclick = function () {
+        S.draft = { name: S.query.trim(), lat: null, lng: null, cc: null };
+        renderModal();
+      };
+      empty.appendChild(p);
+      empty.appendChild(btn);
+      box.appendChild(empty);
+      return;
+    }
+
+    countries.forEach(function (c) { box.appendChild(countryRow(c)); });
+
+    if (places.length) {
+      var head = document.createElement('div');
+      head.className = 'section';
+      head.textContent = t('search_section_cities');
+      box.appendChild(head);
+      places.forEach(function (p) { box.appendChild(placeRow(p)); });
+    }
+  }
+
+  function countryRow(country) {
+    var row = document.createElement('div');
+    row.className = 'row country';
+
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = nameOf(country);
+
+    var code = document.createElement('div');
+    code.className = 'code';
+    code.textContent = country.code;
+
+    row.appendChild(name);
+    row.appendChild(code);
+    row.appendChild(dot(S.visited.has(country.code), false, function () {
+      toggleVisited(country.code);
+    }));
+
+    row.onclick = function () {
+      call('focusCountry', country.code);
+      setQuery('');
+    };
+    return row;
+  }
+
+  function placeRow(place) {
+    var country = place.cc ? S.byCode[place.cc] : null;
+    var row = document.createElement('div');
+    row.className = 'row place';
+
+    var flag = document.createElement('div');
+    flag.className = 'flag';
+    flag.textContent = country ? (country.flag || '') : '';
+
+    var labels = document.createElement('div');
+    labels.className = 'labels';
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = placeName(place);
+    labels.appendChild(name);
+    if (country) {
+      var sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = nameOf(country);
+      labels.appendChild(sub);
+    }
+
+    row.appendChild(flag);
+    row.appendChild(labels);
+    row.appendChild(dot(isPinned(place.id), true, function () { togglePlace(place); }));
+
+    row.onclick = function () {
+      // Gia' sul globo: si apre la sua card. Se no una perlina temporanea, che
+      // non viene salvata - volare e basta non faceva capire dove fosse.
+      if (isPinned(place.id)) call('focusPlace', place.id);
+      else call('previewPlace', placeJson(place));
+      setQuery('');
+    };
+    return row;
+  }
+
+  function dot(on, isPlace, onToggle) {
+    var b = document.createElement('button');
+    b.className = 'dot' + (on ? ' on' : '') + (isPlace ? ' pin' : '');
+    b.title = isPlace ? t(on ? 'unmark_place' : 'mark_place')
+                      : t(on ? 'unmark_visited' : 'mark_visited');
+    b.appendChild(document.createElement('i'));
+    b.onclick = function (ev) { ev.stopPropagation(); onToggle(); };
+    return b;
+  }
+
+  // ------------------------------------------------------------- azioni
+  function toggleVisited(code) {
+    var next = !S.visited.has(code);
+    if (next) S.visited.add(code); else S.visited.delete(code);
+    save();
+    call('setCountryVisited', code, next);
+    renderChip(); renderResults(); if (S.sheetOpen) renderSheet();
+  }
+
+  function togglePlace(place) {
+    if (isPinned(place.id)) S.places = S.places.filter(function (p) { return p.id !== place.id; });
+    else S.places = S.places.concat([placeFromJson(placeJson(place))]);
+    save();
+    pushPlaces();
+    renderResults();
+  }
+
+  function createPlace(name, lat, lng, cc) {
+    var place = {
+      id: 'u:' + Date.now().toString(36),
+      nameIt: name, nameEn: name,
+      lat: lat, lng: lng, cc: cc || null, custom: true
+    };
+    S.draft = null;
+    addPlace(place);
+    pushPlaces();
+    call('focusPlace', place.id);
+    setQuery('');
+    renderModal();
+  }
+
+  function setQuery(value) {
+    S.query = value;
+    $('q').value = value;
+    renderResults();
+  }
+
+  // ---------------------------------------------------- barra di ricerca
+  (function wireSearch() {
+    var input = $('q');
+    var bar = $('bar');
+
+    input.addEventListener('input', function () {
+      S.query = input.value;
+      renderResults();
+    });
+
+    // Toccare la barra azzera la ricerca, sempre. Replica il pointerInput di
+    // SearchPanel.kt: sta sul contenitore, non sul campo, e parte dopo che il
+    // campo ha gia' fatto il suo (fuoco e cursore).
+    //
+    // ATTENZIONE: sul telefono questa regola serve a rimediare al fuoco che
+    // passa alla WebView, cosa che qui NON succede. Che funzioni qui non
+    // dimostra che funzioni li'.
+    bar.addEventListener('pointerdown', function () {
+      if (S.query) setQuery('');
+    });
+
+    $('clear').addEventListener('click', function () { setQuery(''); });
+  })();
+
+  // ------------------------------------------------------- VisitedSheet
+  function openSheet() { S.sheetOpen = true; renderSheet(); }
+  function closeSheet() { S.sheetOpen = false; renderSheet(); }
+
+  function renderSheet() {
+    var sheet = $('sheet');
+    var scrim = $('scrim');
+    if (!S.sheetOpen) { sheet.hidden = true; scrim.hidden = true; return; }
+
+    scrim.hidden = false;
+    scrim.onclick = closeSheet;
+    sheet.hidden = false;
+    sheet.textContent = '';
+
+    var handle = document.createElement('div');
+    handle.className = 'handle';
+    sheet.appendChild(handle);
+
+    var visitedList = S.catalog.filter(function (c) { return S.visited.has(c.code); })
+      .sort(function (a, b) { return norm(nameOf(a)) < norm(nameOf(b)) ? -1 : 1; });
+
+    var head = document.createElement('div');
+    head.className = 'head';
+    var titles = document.createElement('div');
+    titles.className = 'titles';
+    var title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = t('visited_title');
+    var count = document.createElement('div');
+    count.className = 'count';
+    count.textContent = t('counter', visitedList.length, S.catalog.length);
+    titles.appendChild(title);
+    titles.appendChild(count);
+
+    var lang = document.createElement('div');
+    lang.className = 'lang';
+    ['it', 'en'].forEach(function (tag) {
+      var b = document.createElement('button');
+      b.textContent = tag.toUpperCase();
+      if (tag === S.lang) b.className = 'on';
+      b.onclick = function () {
+        if (tag === S.lang) return;
+        S.lang = tag;
+        save();
+        call('setLanguage', tag);
+        renderAll();
+      };
+      lang.appendChild(b);
+    });
+
+    head.appendChild(titles);
+    head.appendChild(lang);
+    sheet.appendChild(head);
+
+    var actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.appendChild(sheetAction(t('backup_export'), doExport));
+    actions.appendChild(sheetAction(t('backup_import'), function () { $('file').click(); }));
+    sheet.appendChild(actions);
+
+    var div = document.createElement('div');
+    div.className = 'divider';
+    sheet.appendChild(div);
+
+    if (!visitedList.length) {
+      var none = document.createElement('div');
+      none.className = 'none';
+      none.textContent = t('visited_empty');
+      sheet.appendChild(none);
+      return;
+    }
+
+    var list = document.createElement('div');
+    list.className = 'list';
+    visitedList.forEach(function (c) {
+      var row = countryRow(c);
+      row.onclick = function () { call('focusCountry', c.code); closeSheet(); };
+      list.appendChild(row);
+    });
+    sheet.appendChild(list);
+  }
+
+  function sheetAction(label, onClick) {
+    var b = document.createElement('button');
+    b.className = 'sheet-action';
+    b.textContent = label;
+    b.onclick = onClick;
+    return b;
+  }
+
+  // ------------------------------------------------------- dialoghi
+  function renderModal() {
+    var modal = $('modal');
+    modal.textContent = '';
+
+    if (S.pendingImport) { modal.hidden = false; modal.appendChild(importDialog()); return; }
+    if (S.draft) { modal.hidden = false; modal.appendChild(placeDialog()); return; }
+    modal.hidden = true;
+  }
+
+  function importDialog() {
+    var data = S.pendingImport;
+    var box = dialogBox(t('backup_import_title'));
+    var text = document.createElement('p');
+    text.textContent = t('backup_import_body', data.visited.length, data.places.length);
+    box.body.appendChild(text);
+
+    box.buttons.appendChild(dialogButton(t('backup_import_confirm'), 'btn-confirm', function () {
+      S.visited = new Set(data.visited);
+      S.places = data.places;
+      S.pendingImport = null;
+      save();
+      call('setVisited', Array.from(S.visited));
+      pushPlaces();
+      renderAll();
+      toast(t('backup_import_ok'));
+    }));
+    box.buttons.appendChild(dialogButton(t('cancel'), 'btn-cancel', function () {
+      S.pendingImport = null;
+      renderModal();
+    }));
+    return box.root;
+  }
+
+  function placeDialog() {
+    var draft = S.draft;
+    var box = dialogBox(t('place_new_title'));
+
+    var nameField = outlined(t('place_name'), t('place_name_hint'), draft.name || '');
+    var coordsField = outlined(
+      t('place_coords'), t('place_coords_hint'),
+      (draft.lat !== null && draft.lng !== null) ? formatCoords(draft.lat, draft.lng) : ''
+    );
+    var error = document.createElement('div');
+    error.className = 'field-error';
+    error.hidden = true;
+    error.textContent = t('place_coords_invalid');
+
+    box.body.appendChild(nameField.root);
+    box.body.appendChild(coordsField.root);
+    box.body.appendChild(error);
+
+    box.buttons.appendChild(dialogButton(t('place_create'), 'btn-confirm', function () {
+      var name = nameField.input.value;
+      var c = parseCoords(coordsField.input.value);
+      if (!name.trim() || !c) { error.hidden = false; coordsField.root.classList.add('bad'); return; }
+      // Coordinate non toccate: il paese lo sa gia' il JavaScript, che le ha
+      // calcolate sotto il dito. Scritte o corrette a mano, glielo si chiede.
+      if (draft.lat === c[0] && draft.lng === c[1]) createPlace(name.trim(), c[0], c[1], draft.cc);
+      else resolveCountry(c[0], c[1], function (code) { createPlace(name.trim(), c[0], c[1], code); });
+    }));
+    box.buttons.appendChild(dialogButton(t('cancel'), 'btn-cancel', function () {
+      S.draft = null;
+      renderModal();
+    }));
+
+    setTimeout(function () { nameField.input.focus(); }, 0);
+    return box.root;
+  }
+
+  function dialogBox(title) {
+    var root = document.createElement('div');
+    root.className = 'dialog';
+    var h = document.createElement('h2');
+    h.textContent = title;
+    var body = document.createElement('div');
+    var buttons = document.createElement('div');
+    buttons.className = 'buttons';
+    root.appendChild(h);
+    root.appendChild(body);
+    root.appendChild(buttons);
+    return { root: root, body: body, buttons: buttons };
+  }
+
+  function dialogButton(label, cls, onClick) {
+    var b = document.createElement('button');
+    b.className = cls;
+    b.textContent = label;
+    b.onclick = onClick;
+    return b;
+  }
+
+  function outlined(label, hint, value) {
+    var root = document.createElement('div');
+    root.className = 'field-out';
+    var l = document.createElement('label');
+    l.textContent = label;
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = hint;
+    input.value = value;
+    root.appendChild(l);
+    root.appendChild(input);
+    return { root: root, input: input };
+  }
+
+  function formatCoords(lat, lng) {
+    var r = function (v) { return String(Math.round(v * 10000) / 10000); };
+    return r(lat) + ', ' + r(lng);
+  }
+
+  /**
+   * parseCoords di AddPlaceDialog.kt: due numeri da una stringa qualsiasi,
+   * prima col punto decimale e poi trattando la virgola come decimale. Fuori
+   * intervallo si rifiuta.
+   */
+  function parseCoords(text) {
+    var NUMBER = /-?\d+(?:\.\d+)?/g;
+    var parts = String(text).match(NUMBER) || [];
+    if (parts.length !== 2) parts = String(text).replace(/,/g, '.').match(NUMBER) || [];
+    if (parts.length !== 2) return null;
+    var lat = parseFloat(parts[0]), lng = parseFloat(parts[1]);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return [lat, lng];
+  }
+
+  // ------------------------------------------------------------- backup
+  var KIND = 'been-there-backup';
+  var VERSION = 1;
+
+  /** Backup.encode: stesso file che scrive il telefono, chiavi comprese. */
+  function encodeBackup() {
+    var stamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    return JSON.stringify({
+      kind: KIND,
+      version: VERSION,
+      exportedAt: stamp,
+      visited: Array.from(S.visited).sort(),
+      places: S.places.map(placeJson)
+    }, null, 2);
+  }
+
+  function decodeBackup(raw) {
+    try {
+      var root = JSON.parse(raw);
+      if (!root || root.kind !== KIND) return null;
+      if (Number(root.version || 0) > VERSION) return null;
+      var visited = (root.visited || []).filter(function (v) { return v && String(v).trim(); });
+      var places = (root.places || []).map(placeFromJson).filter(Boolean);
+      return { visited: visited, places: places };
+    } catch (e) { return null; }
+  }
+
+  function doExport() {
+    try {
+      var name = 'been-there-' + new Date().toISOString().slice(0, 10) + '.json';
+      var blob = new Blob([encodeBackup()], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+      toast(t('backup_export_ok'));
+    } catch (e) {
+      log('err', 'export fallito: ' + e.message);
+      toast(t('backup_export_fail'));
+    }
+  }
+
+  $('file').addEventListener('change', function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    file.text().then(function (raw) {
+      var parsed = decodeBackup(raw);
+      if (!parsed) { toast(t('backup_import_fail')); return; }
+      S.pendingImport = parsed;
+      closeSheet();
+      renderModal();
+    });
+  });
+
+  var toastTimer = null;
+  function toast(message) {
+    var el = $('toast');
+    el.textContent = message;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 2200);
+  }
+
+  // ------------------------------------------------------ striscia di lavoro
+  $('chip').addEventListener('click', openSheet);
+
+  $('viewport').addEventListener('change', function (ev) {
+    $('device').classList.toggle('full', ev.target.value === 'full');
+  });
+
+  $('reload').addEventListener('click', function () {
+    S.ready = false;
+    renderChip();
+    bootGlobe();
+  });
+
+  $('wipe').addEventListener('click', function () {
+    S.visited = new Set();
+    S.places = [];
+    save();
+    call('setVisited', []);
+    pushPlaces();
+    renderAll();
+    log('out', 'dati azzerati');
+  });
+
+  $('seed').addEventListener('click', function () {
+    if (!S.ready) return;
+    S.visited = new Set(S.catalog.slice(0, 12).map(function (c) { return c.code; }));
+    S.places = S.placeCatalog.slice(0, 6).map(function (p) { return placeFromJson(placeJson(p)); });
+    save();
+    call('setVisited', Array.from(S.visited));
+    pushPlaces();
+    renderAll();
+  });
+
+  $('clearlog').addEventListener('click', function () { $('log').textContent = ''; });
+
+  // ---------------------------------------------------------------- avvio
+  load();
+  renderChip();
+
+  Promise.all([
+    loadStrings(),
+    fetch(ASSETS + 'cities.json').then(function (r) { return r.json(); })
+      .then(function (list) { S.cityRaw = list; })
+  ]).then(function () {
+    renderSearch();
+    return bootGlobe();
+  }).catch(function (e) {
+    log('err', 'avvio fallito: ' + e.message);
+    log('err', 'il server va lanciato dalla RADICE del repo, non da assets/');
+  });
+})();
+</script>
+</body>
+</html>

@@ -3,6 +3,8 @@ package com.beenthere.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -88,18 +91,23 @@ fun SearchPanel(
     val shape = RoundedCornerShape(14.dp)
 
     // Tornando sulla ricerca si ricomincia da capo, invece di trovarci la parola
-    // di prima. Si azzera in DUE momenti, e servono entrambi:
+    // di prima. La regola che conta e' quella sul TOCCO, piu' sotto: ogni volta
+    // che si tocca la barra il testo sparisce.
     //
-    //  - quando il gruppo perde il fuoco, che e' il caso pulito. Il fuoco si
-    //    guarda sul GRUPPO e non sul solo campo di testo perche' dentro il
-    //    pannello c'e' anche il pallino di ogni riga: se rubasse il fuoco al
-    //    campo, un controllo sul solo campo chiuderebbe la lista proprio mentre
-    //    la si sta usando;
-    //  - quando il campo RIACQUISTA il fuoco. Non e' una ridondanza: toccando
-    //    il globo il fuoco se lo prende la WebView, che e' una View Android
-    //    dentro una AndroidView, e Compose non sempre se ne accorge - quindi la
-    //    perdita di fuoco puo' non arrivare mai. Questo secondo controllo non
-    //    dipende da quella notifica.
+    // Il fuoco da solo non basta, ed e' il motivo per cui questo era ancora
+    // rotto: toccando il globo il fuoco se lo prende la WebView, che e' una
+    // View Android dentro una AndroidView, e Compose non sempre se ne accorge.
+    // Se la perdita di fuoco non arriva mai, per Compose il campo non ha mai
+    // smesso di essere a fuoco: ritoccandolo non c'e' nessun CAMBIO di fuoco da
+    // notificare, e un controllo basato su onFocusChanged non parte proprio.
+    // Il tocco invece arriva sempre.
+    //
+    // Le due righe qui sotto restano per il caso pulito - si esce dalla ricerca
+    // e la lista dei risultati si chiude senza doverla toccare. Il fuoco si
+    // guarda sul GRUPPO e non sul solo campo di testo perche' dentro il
+    // pannello c'e' anche il pallino di ogni riga: se rubasse il fuoco al
+    // campo, un controllo sul solo campo chiuderebbe la lista proprio mentre la
+    // si sta usando.
     var hadFocus by remember { mutableStateOf(false) }
 
     Column(
@@ -120,6 +128,25 @@ fun SearchPanel(
                 .clip(shape)
                 .background(Panel, shape)
                 .border(1.dp, if (query.isEmpty()) BorderGray else Visited, shape)
+                // Toccare la barra azzera la ricerca, sempre. Il gesto si
+                // guarda qui sul contenitore e non dentro il campo di testo:
+                // arriva nella passata Main, cioe' dopo che il campo l'ha
+                // gestito, e con requireUnconsumed = false lo vediamo anche se
+                // il campo l'ha consumato per piazzare il cursore. Cosi' il
+                // tocco fa il suo lavoro normale - tastiera e cursore - e noi
+                // in piu' svuotiamo il testo.
+                //
+                // Il prezzo: se stai scrivendo e tocchi il campo per correggere
+                // una lettera a meta' parola, riparti da vuoto. E' il
+                // comportamento chiesto ("ogni volta che clicco sulla ricerca
+                // il nome sparisce") e su un campo a riga sola conta poco:
+                // si riscrive, mentre ritrovarsi la citta' di ieri no.
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        onQueryChange("")
+                    }
+                }
                 .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             Icon(
@@ -281,18 +308,26 @@ fun PlaceRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
+            .padding(start = 14.dp, end = 8.dp, top = 7.dp, bottom = 7.dp)
     ) {
         // Larghezza fissa anche senza bandiera, cosi' i nomi restano allineati.
         val flag = country?.flag.orEmpty()
         Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
             if (flag.isNotEmpty()) Text(text = flag, fontSize = 17.sp)
         }
-        Column(Modifier.weight(1f).padding(start = 6.dp)) {
+        // Le due righe vanno staccate a mano. Impilate e basta, l'altezza di
+        // riga di 15sp e quella di 11sp si toccano e il nome della citta'
+        // sembra attaccato al paese: lineHeight fissa lo spazio dentro ogni
+        // riga, i 3dp lo spazio fra le due.
+        Column(
+            modifier = Modifier.weight(1f).padding(start = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
             Text(
                 text = place.name(language),
                 color = OnPanel,
                 fontSize = 15.sp,
+                lineHeight = 17.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -301,6 +336,7 @@ fun PlaceRow(
                     text = country.name(language),
                     color = OnPanelMuted,
                     fontSize = 11.sp,
+                    lineHeight = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
