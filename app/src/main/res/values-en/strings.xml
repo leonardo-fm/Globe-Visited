@@ -35,5 +35,13 @@
     <string name="backup_import_title">Restore this backup?</string>
     <string name="backup_import_body">The file holds %1$d countries and %2$d places. It replaces what you have in the app now.</string>
     <string name="backup_import_confirm">Replace</string>
+    <string name="backup_export_hint">Saves a .json file with your visited countries and your places.</string>
+    <string name="backup_import_hint">Reads a .json file exported from here and replaces your current data.</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_open">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_section_language">Language</string>
+    <string name="settings_section_backup">Backup</string>
 
 </resources>

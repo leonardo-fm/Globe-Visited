@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -91,6 +92,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     // cancellare a mano.
     var resultsOpen by remember { mutableStateOf(false) }
     var sheetOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
 
@@ -195,12 +197,18 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                     .padding(12.dp)
                     .widthIn(max = 520.dp)
             ) {
-                CounterChip(
-                    visitedCount = state.visitedCount,
-                    total = state.total,
-                    isReady = state.isReady,
-                    onClick = { sheetOpen = true }
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CounterChip(
+                        visitedCount = state.visitedCount,
+                        total = state.total,
+                        isReady = state.isReady,
+                        onClick = { sheetOpen = true }
+                    )
+                    SettingsButton(onClick = { settingsOpen = true })
+                }
 
                 SearchPanel(
                     query = query,
@@ -294,10 +302,22 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                             sheetOpen = false
                         }
                     },
-                    onRemove = { country -> viewModel.toggleVisited(country.code) },
+                    onRemove = { country -> viewModel.toggleVisited(country.code) }
+                )
+            }
+
+            // Ultima nel Box, quindi sopra tutto il resto: e' una schermata
+            // intera, non un pannello che galleggia sul globo.
+            if (settingsOpen) {
+                SettingsScreen(
+                    language = state.language,
                     onLanguageChange = viewModel::setLanguage,
                     onExport = { exportLauncher.launch(Backup.fileName()) },
-                    onImport = { importLauncher.launch(arrayOf("*/*")) }
+                    // Tipo aperto di proposito, vedi importLauncher: il file
+                    // scritto e' un .json, ma molti gestori di file lo
+                    // nasconderebbero se qui filtrassimo su application/json.
+                    onImport = { importLauncher.launch(arrayOf("*/*")) },
+                    onClose = { settingsOpen = false }
                 )
             }
         }

@@ -37,5 +37,13 @@
     <string name="backup_import_title">Ripristinare il backup?</string>
     <string name="backup_import_body">Il file contiene %1$d paesi e %2$d luoghi. Sostituisce quello che hai adesso nell’app.</string>
     <string name="backup_import_confirm">Sostituisci</string>
+    <string name="backup_export_hint">Salva un file .json con i paesi visitati e i tuoi luoghi.</string>
+    <string name="backup_import_hint">Legge un file .json esportato da qui e sostituisce i dati di adesso.</string>
+
+    <string name="settings_title">Impostazioni</string>
+    <string name="settings_open">Impostazioni</string>
+    <string name="settings_back">Indietro</string>
+    <string name="settings_section_language">Lingua</string>
+    <string name="settings_section_backup">Backup</string>
 
 </resources>
