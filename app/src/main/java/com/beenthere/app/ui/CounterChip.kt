@@ -18,7 +18,7 @@ import com.beenthere.app.R
 import com.beenthere.app.ui.theme.BorderGray
 import com.beenthere.app.ui.theme.OnPanel
 import com.beenthere.app.ui.theme.Panel
-import com.beenthere.app.ui.theme.Visited
+import com.beenthere.app.ui.theme.LocalVisitedColor
 
 /**
  * "47 / 242 paesi". E' anche il pulsante che apre la lista dei visitati:
@@ -32,6 +32,7 @@ fun CounterChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val accent = LocalVisitedColor.current
     val shape = RoundedCornerShape(999.dp)
     val text = if (isReady) {
         appString(R.string.counter, visitedCount, total)
@@ -46,7 +47,7 @@ fun CounterChip(
             val start = text.indexOf(needle)
             if (start >= 0) {
                 addStyle(
-                    SpanStyle(color = Visited, fontWeight = FontWeight.Bold),
+                    SpanStyle(color = accent, fontWeight = FontWeight.Bold),
                     start,
                     start + needle.length
                 )

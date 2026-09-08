@@ -85,6 +85,15 @@ class GlobeController {
         }
     }
 
+    /**
+     * Colore dei paesi visitati. Ricolora le calotte gia' disegnate e aggiorna
+     * la variabile CSS, cosi' anche il popup che la pagina disegna da se' segue
+     * la scelta.
+     */
+    fun setVisitedColor(hex: String) {
+        eval("window.BeenThere && BeenThere.setVisitedColor(${JSONObject.quote(hex)})")
+    }
+
     /** Lingua di nome del paese e pulsante dentro il popup disegnato dalla pagina. */
     fun setLanguage(tag: String) {
         eval("window.BeenThere && BeenThere.setLanguage(${JSONObject.quote(tag)})")

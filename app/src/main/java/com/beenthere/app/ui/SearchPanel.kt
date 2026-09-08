@@ -3,6 +3,7 @@ package com.beenthere.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -30,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
@@ -50,7 +50,7 @@ import com.beenthere.app.ui.theme.OnPanel
 import com.beenthere.app.ui.theme.OnPanelMuted
 import com.beenthere.app.ui.theme.Panel
 import com.beenthere.app.ui.theme.PlacePin
-import com.beenthere.app.ui.theme.Visited
+import com.beenthere.app.ui.theme.LocalVisitedColor
 
 /**
  * Campo di ricerca e risultati. La ricerca e' interamente nativa: il catalogo
@@ -91,6 +91,7 @@ fun SearchPanel(
     modifier: Modifier = Modifier
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
+    val accent = LocalVisitedColor.current
     val shape = RoundedCornerShape(14.dp)
 
     // Il fuoco e' il caso pulito - si esce dalla ricerca e la lista si chiude
@@ -118,7 +119,7 @@ fun SearchPanel(
                 .fillMaxWidth()
                 .clip(shape)
                 .background(Panel, shape)
-                .border(1.dp, if (query.isEmpty()) BorderGray else Visited, shape)
+                .border(1.dp, if (query.isEmpty()) BorderGray else accent, shape)
                 // Toccare la barra riapre la lista, sempre - il testo non si
                 // tocca. Serve perche' il fuoco qui sopra non e' affidabile:
                 // tornando dalla WebView spesso per Compose il campo non ha mai
@@ -162,7 +163,7 @@ fun SearchPanel(
                     enabled = isReady,
                     singleLine = true,
                     textStyle = TextStyle(color = OnPanel, fontSize = 15.sp),
-                    cursorBrush = SolidColor(Visited),
+                    cursorBrush = SolidColor(accent),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = {
                         val country = results.firstOrNull()

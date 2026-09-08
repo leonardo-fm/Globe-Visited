@@ -3,6 +3,7 @@ package com.beenthere.app.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -30,6 +31,12 @@ class SettingsRepository(private val context: Context) {
     // gia' salvati.
     private val placesKey = stringPreferencesKey("places")
 
+    // Preferenze di aspetto. Stanno insieme ai dati ma non sono dati: "azzera
+    // tutto" cancella paesi e luoghi e queste NON le tocca, perche' nessuno
+    // che vuole ricominciare da capo intende anche tornare all'arancione.
+    private val pinsVisibleKey = booleanPreferencesKey("pins_visible")
+    private val visitedColorKey = stringPreferencesKey("visited_color")
+
     private val preferences: Flow<Preferences> = context.dataStore.data
         .catch { error ->
             // Un file corrotto o illeggibile non deve impedire l'avvio dell'app:
@@ -43,6 +50,17 @@ class SettingsRepository(private val context: Context) {
 
     /** I luoghi piantati dall'utente: citta' del catalogo e, dalla fase 3, pin a mano. */
     val places: Flow<List<Place>> = preferences.map { Place.listFromJson(it[placesKey]) }
+
+    /** Se i pin dei luoghi si disegnano sul globo. Non li cancella: li nasconde. */
+    val pinsVisible: Flow<Boolean> = preferences.map { it[pinsVisibleKey] ?: true }
+
+    /**
+     * Colore dei paesi visitati. Si salva il testo esadecimale e non l'indice
+     * di una tavolozza: se un domani i colori offerti cambiano di ordine, la
+     * scelta gia' fatta non diventa un altro colore.
+     */
+    val visitedColor: Flow<String> =
+        preferences.map { VisitedColors.sanitize(it[visitedColorKey]) }
 
     suspend fun setVisited(code: String, isVisited: Boolean) {
         context.dataStore.edit { prefs ->
@@ -72,6 +90,26 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[visitedKey] = visited
             prefs[placesKey] = Place.listToJson(places)
+        }
+    }
+
+    suspend fun setPinsVisible(visible: Boolean) {
+        context.dataStore.edit { prefs -> prefs[pinsVisibleKey] = visible }
+    }
+
+    suspend fun setVisitedColor(hex: String) {
+        context.dataStore.edit { prefs -> prefs[visitedColorKey] = VisitedColors.sanitize(hex) }
+    }
+
+    /**
+     * Cancella paesi e luoghi, e lascia in piedi lingua, colore e pin: e'
+     * "ricomincio da capo", non "reinstallo l'app". Una `edit` sola, come
+     * [replaceAll].
+     */
+    suspend fun clearData() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(visitedKey)
+            prefs.remove(placesKey)
         }
     }
 

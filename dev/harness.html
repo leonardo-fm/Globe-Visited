@@ -170,6 +170,52 @@
     display: block; margin-top: 4px;
     font-size: 12px; line-height: 16px; color: var(--on-muted);
   }
+  #settings .setting-label { font: 15px var(--font); color: var(--on-panel); padding: 0 20px 2px; }
+
+  #settings .swatches { display: flex; gap: 12px; padding: 6px 20px; }
+  #settings .swatch {
+    width: 38px; height: 38px; border: 0; border-radius: 50%;
+    cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--background);
+  }
+  #settings .swatch svg { width: 20px; height: 20px; display: none; }
+  #settings .swatch.on svg { display: block; }
+
+  #settings .toggle-row {
+    display: flex; align-items: center; gap: 12px;
+    margin: 5px 20px; padding: 10px 12px 10px 16px;
+    border: 1px solid var(--border); border-radius: 14px; cursor: pointer;
+  }
+  #settings .toggle-row .text { flex: 1; }
+  #settings .toggle-row .label { font: 15px var(--font); color: var(--on-panel); }
+  #settings .toggle-row .hint {
+    margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--on-muted);
+  }
+  #settings .switch {
+    flex: none; width: 44px; height: 26px; padding: 0;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--panel-solid); cursor: pointer;
+    display: flex; align-items: center;
+  }
+  #settings .switch i {
+    width: 18px; height: 18px; margin: 0 3px; border-radius: 50%;
+    background: var(--on-muted); transition: transform .16s, background .16s;
+  }
+  #settings .switch.on { background: var(--visited); border-color: var(--visited); }
+  #settings .switch.on i { transform: translateX(18px); background: var(--panel-solid); }
+
+  #settings .action.danger { color: #FF6B6B; }
+  #settings .action.danger .hint { color: var(--on-muted); }
+
+  #settings .about { padding: 2px 20px 28px; }
+  #settings .about .ver { font-size: 14px; color: var(--on-panel); }
+  #settings .about .sub {
+    margin-top: 10px; font-size: 12px; line-height: 17px; color: var(--on-muted);
+  }
+
+  .btn-danger { color: #FF6B6B; }
+
   /* Come per #modal: il `display: flex` qui sopra e' una regola d'autore e
      batte la `[hidden] { display: none }` del browser. Senza questa riga la
      pagina resta stesa sul device anche da nascosta e si prende ogni click. */
@@ -416,8 +462,21 @@
   var LS = {
     visited: 'beenthere.harness.visited',
     places:  'beenthere.harness.places',
-    lang:    'beenthere.harness.lang'
+    lang:    'beenthere.harness.lang',
+    color:   'beenthere.harness.color',
+    pins:    'beenthere.harness.pins'
   };
+
+  // Deve restare uguale a VisitedColors.kt: se cambia li', cambia qui.
+  var COLORS = [
+    { hex: '#FF8C1A', label: 'color_orange' },
+    { hex: '#FF4D4D', label: 'color_red' },
+    { hex: '#FFD34E', label: 'color_yellow' },
+    { hex: '#35D07F', label: 'color_green' },
+    { hex: '#22D3EE', label: 'color_cyan' },
+    { hex: '#A78BFA', label: 'color_purple' }
+  ];
+  var DEFAULT_COLOR = COLORS[0].hex;
 
   // ------------------------------------------------------------------ stato
   // Corrisponde a UiState + MainViewModel: qui vive la "verita'", come
@@ -438,7 +497,10 @@
     draft: null,
     pendingImport: null,
     sheetOpen: false,
-    settingsOpen: false
+    settingsOpen: false,
+    confirmClear: false,
+    visitedColor: DEFAULT_COLOR,
+    pinsVisible: true
   };
 
   var STR = { it: {}, en: {} };
@@ -608,7 +670,22 @@
     return { id: p.id, nameIt: p.nameIt, nameEn: p.nameEn, lat: p.lat, lng: p.lng,
              cc: p.cc || null, custom: !!p.custom };
   }
-  function pushPlaces() { call('setPlaces', S.places.map(placeJson)); }
+  /**
+   * I luoghi verso il globo: quelli veri, o nessuno se i pin sono spenti. Come
+   * emitPlaces() in MainViewModel, ogni setPlaces passa di qui.
+   */
+  function pushPlaces() {
+    call('setPlaces', S.pinsVisible ? S.places.map(placeJson) : []);
+  }
+
+  /**
+   * Il colore scelto, alla pagina e al globo. Nel banco la UI e' HTML, quindi
+   * basta la variabile CSS; nell'app quel pezzo lo fa LocalVisitedColor.
+   */
+  function applyAccent() {
+    document.documentElement.style.setProperty('--visited', S.visitedColor);
+    call('setVisitedColor', S.visitedColor);
+  }
 
   // ------------------------------------------------------- ponte dal globo
   // GlobeBridge.kt. Ogni metodo la' rimbalza sul main thread con Handler.post:
@@ -663,6 +740,8 @@
       localStorage.setItem(LS.visited, JSON.stringify(Array.from(S.visited)));
       localStorage.setItem(LS.places, JSON.stringify(S.places.map(placeJson)));
       localStorage.setItem(LS.lang, S.lang);
+      localStorage.setItem(LS.color, S.visitedColor);
+      localStorage.setItem(LS.pins, S.pinsVisible ? '1' : '0');
     } catch (e) { log('err', 'salvataggio fallito: ' + e.message); }
   }
 
@@ -673,6 +752,10 @@
       var p = JSON.parse(localStorage.getItem(LS.places) || '[]');
       S.places = (Array.isArray(p) ? p : []).map(placeFromJson).filter(Boolean);
       S.lang = localStorage.getItem(LS.lang) === 'en' ? 'en' : 'it';
+      // sanitize() di VisitedColors: quello che non e' in tavolozza torna al default
+      var c = String(localStorage.getItem(LS.color) || '').toUpperCase();
+      S.visitedColor = COLORS.some(function (x) { return x.hex === c; }) ? c : DEFAULT_COLOR;
+      S.pinsVisible = localStorage.getItem(LS.pins) !== '0';
     } catch (e) { log('err', 'lettura fallita: ' + e.message); }
   }
 
@@ -712,6 +795,7 @@
 
     // Stesso ordine di MainViewModel.onGlobeReady.
     call('setLanguage', S.lang);
+    applyAccent();
     call('setVisited', Array.from(S.visited));
     pushPlaces();
 
@@ -1099,6 +1183,47 @@
     });
     page.appendChild(lang);
 
+    // ------------------------------------------------------------- globo
+    page.appendChild(sectionLabel(t('settings_section_globe')));
+
+    var colorLabel = document.createElement('div');
+    colorLabel.className = 'setting-label';
+    colorLabel.textContent = t('settings_color');
+    page.appendChild(colorLabel);
+
+    var swatches = document.createElement('div');
+    swatches.className = 'swatches';
+    COLORS.forEach(function (c) {
+      var b = document.createElement('button');
+      b.className = 'swatch' + (c.hex === S.visitedColor ? ' on' : '');
+      b.style.background = c.hex;
+      b.title = t(c.label);
+      b.setAttribute('aria-label', t(c.label));
+      b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M20 6L9 17l-5-5"></path></svg>';
+      b.onclick = function () {
+        if (c.hex === S.visitedColor) return;
+        S.visitedColor = c.hex;
+        save();
+        applyAccent();
+        renderSettings();
+      };
+      swatches.appendChild(b);
+    });
+    page.appendChild(swatches);
+
+    page.appendChild(settingsToggle(
+      t('settings_pins'), t('settings_pins_hint'), S.pinsVisible,
+      function (next) {
+        S.pinsVisible = next;
+        save();
+        pushPlaces();
+        renderSettings();
+      }
+    ));
+
+    // ------------------------------------------------------------ backup
     page.appendChild(sectionLabel(t('settings_section_backup')));
     page.appendChild(settingsAction(
       t('backup_export'), t('backup_export_hint'), doExport
@@ -1107,6 +1232,53 @@
       t('backup_import'), t('backup_import_hint'),
       function () { $('file').click(); }
     ));
+
+    // -------------------------------------------------------------- dati
+    page.appendChild(sectionLabel(t('settings_section_data')));
+    var clear = settingsAction(t('data_clear'), t('data_clear_hint'), function () {
+      S.confirmClear = true;
+      renderModal();
+    });
+    clear.classList.add('danger');
+    page.appendChild(clear);
+
+    // -------------------------------------------------------- informazioni
+    page.appendChild(sectionLabel(t('settings_section_about')));
+    var about = document.createElement('div');
+    about.className = 'about';
+    // Nel banco la versione non c'e': l'app la prende da BuildConfig.
+    [['ver', t('about_version', '(banco di prova)')],
+     ['sub', t('about_credits')],
+     ['sub', t('about_offline')]].forEach(function (row) {
+      var d = document.createElement('div');
+      d.className = row[0];
+      d.textContent = row[1];
+      about.appendChild(d);
+    });
+    page.appendChild(about);
+  }
+
+  function settingsToggle(label, hint, checked, onChange) {
+    var row = document.createElement('div');
+    row.className = 'toggle-row';
+    var text = document.createElement('div');
+    text.className = 'text';
+    var l = document.createElement('div');
+    l.className = 'label';
+    l.textContent = label;
+    var h = document.createElement('div');
+    h.className = 'hint';
+    h.textContent = hint;
+    text.appendChild(l); text.appendChild(h);
+    var sw = document.createElement('button');
+    sw.className = 'switch' + (checked ? ' on' : '');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', checked ? 'true' : 'false');
+    sw.innerHTML = '<i></i>';
+    row.appendChild(text); row.appendChild(sw);
+    // Tutta la riga commuta, non il solo interruttore.
+    row.onclick = function () { onChange(!checked); };
+    return row;
   }
 
   function sectionLabel(text) {
@@ -1133,9 +1305,35 @@
     var modal = $('modal');
     modal.textContent = '';
 
+    if (S.confirmClear) { modal.hidden = false; modal.appendChild(clearDialog()); return; }
     if (S.pendingImport) { modal.hidden = false; modal.appendChild(importDialog()); return; }
     if (S.draft) { modal.hidden = false; modal.appendChild(placeDialog()); return; }
     modal.hidden = true;
+  }
+
+  /** Conferma dell'azzeramento: dice quanto sta per sparire, come nell'app. */
+  function clearDialog() {
+    var box = dialogBox(t('data_clear_title'));
+    var text = document.createElement('p');
+    var countries = S.catalog.filter(function (c) { return S.visited.has(c.code); }).length;
+    text.textContent = t('data_clear_body', countries, S.places.length);
+    box.body.appendChild(text);
+
+    box.buttons.appendChild(dialogButton(t('data_clear_confirm'), 'btn-danger', function () {
+      S.confirmClear = false;
+      S.visited = new Set();
+      S.places = [];
+      save();
+      call('setVisited', []);
+      pushPlaces();
+      renderAll();
+      toast(t('data_cleared'));
+    }));
+    box.buttons.appendChild(dialogButton(t('cancel'), 'btn-cancel', function () {
+      S.confirmClear = false;
+      renderModal();
+    }));
+    return box.root;
   }
 
   function importDialog() {

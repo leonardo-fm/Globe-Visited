@@ -25,7 +25,7 @@ import com.beenthere.app.ui.theme.BorderGray
 import com.beenthere.app.ui.theme.OnPanel
 import com.beenthere.app.ui.theme.OnPanelMuted
 import com.beenthere.app.ui.theme.PanelSolid
-import com.beenthere.app.ui.theme.Visited
+import com.beenthere.app.ui.theme.LocalVisitedColor
 
 /**
  * Nome + coordinate, e basta: un luogo non ha data ne' nota.
@@ -87,7 +87,7 @@ fun AddPlaceDialog(
                 if (showError) {
                     Text(
                         text = appString(R.string.place_coords_invalid),
-                        color = Visited,
+                        color = LocalVisitedColor.current,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 6.dp)
                     )
@@ -104,7 +104,7 @@ fun AddPlaceDialog(
             ) {
                 Text(
                     appString(R.string.place_create),
-                    color = if (canConfirm) Visited else OnPanelMuted
+                    color = if (canConfirm) LocalVisitedColor.current else OnPanelMuted
                 )
             }
         },
@@ -120,11 +120,11 @@ fun AddPlaceDialog(
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = OnPanel,
     unfocusedTextColor = OnPanel,
-    focusedBorderColor = Visited,
+    focusedBorderColor = LocalVisitedColor.current,
     unfocusedBorderColor = BorderGray,
-    focusedLabelColor = Visited,
+    focusedLabelColor = LocalVisitedColor.current,
     unfocusedLabelColor = OnPanelMuted,
-    cursorColor = Visited
+    cursorColor = LocalVisitedColor.current
 )
 
 private fun formatCoords(lat: Double, lng: Double): String {

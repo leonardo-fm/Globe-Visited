@@ -12,6 +12,7 @@ import com.beenthere.app.data.CountryCatalog
 import com.beenthere.app.data.Place
 import com.beenthere.app.data.PlaceCatalog
 import com.beenthere.app.data.SettingsRepository
+import com.beenthere.app.data.VisitedColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -51,6 +52,9 @@ sealed interface GlobeCommand {
      * ha bisogno di sapere in che lingua scrivere nome e pulsante.
      */
     data class SetLanguage(val language: AppLanguage) : GlobeCommand
+
+    /** Colore dei paesi visitati, come testo esadecimale (#RRGGBB). */
+    data class SetVisitedColor(val hex: String) : GlobeCommand
 }
 
 data class UiState(
@@ -59,7 +63,10 @@ data class UiState(
     val catalog: CountryCatalog = CountryCatalog.EMPTY,
     val placeCatalog: PlaceCatalog = PlaceCatalog.EMPTY,
     /** I luoghi piantati. Il contatore non li conta: quello resta sui paesi. */
-    val places: List<Place> = emptyList()
+    val places: List<Place> = emptyList(),
+    /** Se i pin si disegnano. I luoghi restano salvati comunque. */
+    val pinsVisible: Boolean = true,
+    val visitedColor: String = VisitedColors.DEFAULT
 ) {
     val isReady: Boolean get() = catalog.size > 0
     val visitedCount: Int get() = visited.count { catalog[it] != null }
@@ -82,7 +89,7 @@ data class PlaceDraft(
 )
 
 /** Esito di un esporta/importa, da mostrare all'utente e poi dimenticare. */
-enum class BackupNotice { EXPORT_OK, EXPORT_FAIL, IMPORT_FAIL, IMPORT_OK }
+enum class BackupNotice { EXPORT_OK, EXPORT_FAIL, IMPORT_FAIL, IMPORT_OK, CLEARED }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -140,7 +147,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearNotice() { _notice.value = null }
 
-    val uiState: StateFlow<UiState> = combine(
+    // combine() tipizzato si ferma a cinque flussi e i dati veri li occupano
+    // tutti: le preferenze di aspetto si innestano con un secondo combine
+    // invece di passare alla versione a vararg, che perderebbe i tipi.
+    private val contents: kotlinx.coroutines.flow.Flow<UiState> = combine(
         repository.visited,
         repository.language,
         catalog,
@@ -154,6 +164,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             placeCatalog = cities,
             places = places
         )
+    }
+
+    val uiState: StateFlow<UiState> = combine(
+        contents,
+        repository.pinsVisible,
+        repository.visitedColor
+    ) { state, pinsVisible, color ->
+        state.copy(pinsVisible = pinsVisible, visitedColor = color)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
 
     /**
@@ -171,9 +189,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // ancora ricevuto la prima emissione di DataStore, e in quel caso si
             // spingerebbe un insieme vuoto (o la lingua di default) sul globo.
             _commands.emit(GlobeCommand.SetLanguage(repository.language.first()))
+            _commands.emit(GlobeCommand.SetVisitedColor(repository.visitedColor.first()))
             _commands.emit(GlobeCommand.SetAll(repository.visited.first()))
-            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+            emitPlaces()
         }
+    }
+
+    /**
+     * Manda al globo i luoghi da disegnare: quelli veri, o nessuno se i pin
+     * sono nascosti. Ogni SetPlaces passa di qui - erano cinque punti sparsi, e
+     * bastava dimenticarne uno perche' i pin ricomparissero da soli.
+     *
+     * Si legge dal repository e non da uiState: quando nessuno sta guardando
+     * (WhileSubscribed) uiState puo' essere fermo a uno stato vecchio.
+     */
+    private suspend fun emitPlaces() {
+        val places = if (repository.pinsVisible.first()) repository.places.first() else emptyList()
+        _commands.emit(GlobeCommand.SetPlaces(places))
     }
 
     /**
@@ -204,7 +236,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * a niente: il globo si spostava e non si vedeva dove fosse la citta'.
      */
     fun focusPlace(place: Place) {
-        val pinned = place.id in uiState.value.placeIds
+        // Coi pin spenti nessun luogo e' disegnato: si mostra la perlina
+        // temporanea, cosi' la ricerca continua a rispondere a "dov'e'?" invece
+        // di volare su un pin invisibile.
+        val pinned = uiState.value.pinsVisible && place.id in uiState.value.placeIds
         viewModelScope.launch {
             _commands.emit(
                 if (pinned) GlobeCommand.FocusPlace(place.id)
@@ -221,7 +256,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val place = uiState.value.placeCatalog[id] ?: return
         viewModelScope.launch {
             repository.addPlace(place)
-            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+            emitPlaces()
         }
     }
 
@@ -230,7 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val present = place.id in uiState.value.placeIds
         viewModelScope.launch {
             if (present) repository.removePlace(place.id) else repository.addPlace(place)
-            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+            emitPlaces()
         }
     }
 
@@ -273,7 +308,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _draft.value = null
         viewModelScope.launch {
             repository.addPlace(place)
-            _commands.emit(GlobeCommand.SetPlaces(repository.places.first()))
+            // Creare un luogo riaccende i pin: volare su un pin nascosto
+            // porterebbe a fissare il vuoto, e chi ne ha appena piantato uno lo
+            // vuole vedere.
+            repository.setPinsVisible(true)
+            emitPlaces()
             _commands.emit(GlobeCommand.FocusPlace(place.id))
         }
     }
@@ -333,8 +372,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // La UI si riallinea da sola leggendo DataStore; il globo no, va
             // ricolorato e ripopolato.
             _commands.emit(GlobeCommand.SetAll(data.visited))
-            _commands.emit(GlobeCommand.SetPlaces(data.places))
+            emitPlaces()
             _notice.value = BackupNotice.IMPORT_OK
+        }
+    }
+
+    fun setPinsVisible(visible: Boolean) {
+        viewModelScope.launch {
+            repository.setPinsVisible(visible)
+            emitPlaces()
+        }
+    }
+
+    fun setVisitedColor(hex: String) {
+        viewModelScope.launch {
+            repository.setVisitedColor(hex)
+            _commands.emit(GlobeCommand.SetVisitedColor(repository.visitedColor.first()))
+        }
+    }
+
+    /**
+     * Azzera paesi e luoghi. La schermata chiede conferma prima di arrivare
+     * qui: e' l'altra operazione, con l'import, che puo' cancellare dati.
+     */
+    fun clearAllData() {
+        viewModelScope.launch {
+            repository.clearData()
+            _commands.emit(GlobeCommand.SetAll(emptySet()))
+            emitPlaces()
+            _notice.value = BackupNotice.CLEARED
         }
     }
 

@@ -9,6 +9,10 @@
     --ocean:    #1b4b8f;
     --land:     #8a8a8a;
     --visited:  #ff8c1a;
+    /* Lo stesso colore al 32%, per il fondo degli interruttori accesi. Sta qui
+       come variabile a se' perche' rgba() non sa prendere --visited a pezzi, e
+       setVisitedColor() deve poter cambiare tutt'e due insieme. */
+    --visited-soft: rgba(255, 140, 26, .32);
     --border:   #33333a;
     --bg:       #05070f;
   }
@@ -158,7 +162,7 @@
                     border-radius: 50%; background: #7b7b88;
                     transition: transform .16s, background .16s; }
   .pin .tgl[aria-checked="true"] { border-color: var(--visited); }
-  .pin .tgl[aria-checked="true"] .sw { background: rgba(255,140,26,.32); }
+  .pin .tgl[aria-checked="true"] .sw { background: var(--visited-soft); }
   .pin .tgl[aria-checked="true"] .sw i { transform: translateX(14px); background: var(--visited); }
   /* Card di un luogo: niente interruttore, un luogo o c'e' o non c'e'. */
   .pin .rm { width: 100%; font: inherit; font-size: 13px; color: #e8e8ee; text-align: center;
@@ -965,6 +969,15 @@
   // della gestione colore. Facendo il giro da un THREE.Color si ottengono
   // esattamente i valori che la libreria avrebbe usato, qualunque sia la
   // gestione colore attiva: il grigio e l'arancione restano quelli richiesti.
+  /** '#ff8c1a' -> 'rgba(255, 140, 26, .32)', per --visited-soft. */
+  function softColor(hex) {
+    var h = String(hex).replace('#', '');
+    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var n = parseInt(h, 16);
+    if (!isFinite(n)) return 'rgba(255, 140, 26, .32)';
+    return 'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', .32)';
+  }
+
   function toLinearRgb(hex) {
     var c = new THREE.Color();
     c.set(hex);
@@ -2742,6 +2755,26 @@
      * o NAME) e le poche stringhe disegnate qui. Rifa' anche l'indice di
      * ricerca, che tiene le etichette gia' risolte nella lingua corrente.
      */
+    /**
+     * Colore dei paesi visitati, spinto da Kotlin.
+     *
+     * Tre cose insieme, e servono tutte: il colore lineare con cui si dipingono
+     * le calotte, la variabile CSS da cui pende tutto il resto della pagina
+     * (popup compreso), e un ridisegno per i paesi gia' accesi. VISITED_RGB
+     * esiste solo dopo che la scena e' stata costruita: se il comando arriva
+     * prima, basta aggiornare VISITED - buildMergedScene lo rilegge da li'.
+     */
+    setVisitedColor: function (hex) {
+      if (!hex) return VISITED;
+      VISITED = String(hex);
+      document.documentElement.style.setProperty('--visited', VISITED);
+      document.documentElement.style.setProperty('--visited-soft', softColor(VISITED));
+      if (THREE) {
+        VISITED_RGB = toLinearRgb(VISITED);
+        repaint();
+      }
+      return VISITED;
+    },
     setLanguage: function (tag) {
       var next = (tag === 'en') ? 'en' : 'it';
       if (next === lang) return lang;

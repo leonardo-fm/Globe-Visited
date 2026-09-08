@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -43,6 +45,7 @@ import com.beenthere.app.BackupNotice
 import com.beenthere.app.GlobeCommand
 import com.beenthere.app.MainViewModel
 import com.beenthere.app.R
+import com.beenthere.app.BuildConfig
 import com.beenthere.app.data.Backup
 import com.beenthere.app.globe.GlobeBridge
 import com.beenthere.app.globe.GlobeController
@@ -51,7 +54,7 @@ import com.beenthere.app.data.PlaceCatalog
 import com.beenthere.app.ui.theme.OnPanel
 import com.beenthere.app.ui.theme.OnPanelMuted
 import com.beenthere.app.ui.theme.PanelSolid
-import com.beenthere.app.ui.theme.Visited
+import com.beenthere.app.ui.theme.LocalVisitedColor
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
@@ -82,6 +85,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 is GlobeCommand.PreviewPlace -> controller.previewPlace(command.place)
                 is GlobeCommand.SetPlaces -> controller.setPlaces(command.places)
                 is GlobeCommand.SetLanguage -> controller.setLanguage(command.language.tag)
+                is GlobeCommand.SetVisitedColor -> controller.setVisitedColor(command.hex)
             }
         }
     }
@@ -93,6 +97,9 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     var resultsOpen by remember { mutableStateOf(false) }
     var sheetOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    // Conferma dell'azzeramento. Sta qui e non dentro le impostazioni perche'
+    // il dialogo va disegnato in cima a tutto, come quello dell'import.
+    var confirmClear by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
 
@@ -137,6 +144,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 BackupNotice.EXPORT_FAIL -> R.string.backup_export_fail
                 BackupNotice.IMPORT_FAIL -> R.string.backup_import_fail
                 BackupNotice.IMPORT_OK -> R.string.backup_import_ok
+                BackupNotice.CLEARED -> R.string.data_cleared
             }
         )
     }
@@ -147,7 +155,14 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
+    // Il colore scelto arriva qui a tutta la UI nativa: contatore, bordo della
+    // ricerca, pallini, cursore. Il globo lo riceve per conto suo, via comando.
+    val accent = remember(state.visitedColor) {
+        Color(android.graphics.Color.parseColor(state.visitedColor))
+    }
+
     ProvideAppLanguage(state.language) {
+      CompositionLocalProvider(LocalVisitedColor provides accent) {
         Box(Modifier.fillMaxSize()) {
 
             // Toccare il globo chiude la lista dei risultati e abbassa la
@@ -256,7 +271,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                     },
                     confirmButton = {
                         TextButton(onClick = viewModel::confirmImport) {
-                            Text(appString(R.string.backup_import_confirm), color = Visited)
+                            Text(appString(R.string.backup_import_confirm), color = LocalVisitedColor.current)
                         }
                     },
                     dismissButton = {
@@ -312,14 +327,55 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                 SettingsScreen(
                     language = state.language,
                     onLanguageChange = viewModel::setLanguage,
+                    visitedColor = state.visitedColor,
+                    onVisitedColorChange = viewModel::setVisitedColor,
+                    pinsVisible = state.pinsVisible,
+                    onPinsVisibleChange = viewModel::setPinsVisible,
                     onExport = { exportLauncher.launch(Backup.fileName()) },
                     // Tipo aperto di proposito, vedi importLauncher: il file
                     // scritto e' un .json, ma molti gestori di file lo
                     // nasconderebbero se qui filtrassimo su application/json.
                     onImport = { importLauncher.launch(arrayOf("*/*")) },
+                    onClearData = { confirmClear = true },
+                    appVersion = BuildConfig.VERSION_NAME,
                     onClose = { settingsOpen = false }
                 )
             }
+
+            // Sopra le impostazioni, da cui nasce. Dice quanto sta per sparire:
+            // "azzera tutto" senza numeri non si sa mai bene cosa costi.
+            if (confirmClear) {
+                AlertDialog(
+                    onDismissRequest = { confirmClear = false },
+                    containerColor = PanelSolid,
+                    titleContentColor = OnPanel,
+                    textContentColor = OnPanel,
+                    title = { Text(appString(R.string.data_clear_title)) },
+                    text = {
+                        Text(
+                            appString(
+                                R.string.data_clear_body,
+                                state.visitedCount,
+                                state.places.size
+                            )
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmClear = false
+                            viewModel.clearAllData()
+                        }) {
+                            Text(appString(R.string.data_clear_confirm), color = DangerRed)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmClear = false }) {
+                            Text(appString(R.string.cancel), color = OnPanelMuted)
+                        }
+                    }
+                )
+            }
         }
+      }
     }
 }

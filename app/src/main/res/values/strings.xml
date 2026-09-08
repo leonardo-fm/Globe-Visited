@@ -46,4 +46,29 @@
     <string name="settings_section_language">Lingua</string>
     <string name="settings_section_backup">Backup</string>
 
+    <string name="settings_section_globe">Globo</string>
+    <string name="settings_section_data">Dati</string>
+    <string name="settings_section_about">Informazioni</string>
+    <string name="settings_color">Colore dei visitati</string>
+    <string name="settings_pins">Mostra i luoghi sul globo</string>
+    <string name="settings_pins_hint">Spegnendolo i pin spariscono dal globo, ma restano salvati: li ritrovi riaccendendo.</string>
+
+    <string name="color_orange">Arancione</string>
+    <string name="color_red">Rosso</string>
+    <string name="color_yellow">Giallo</string>
+    <string name="color_green">Verde</string>
+    <string name="color_cyan">Ciano</string>
+    <string name="color_purple">Viola</string>
+
+    <string name="data_clear">Azzera tutti i dati</string>
+    <string name="data_clear_hint">Cancella i paesi visitati e i luoghi. Lingua, colore e preferenze restano.</string>
+    <string name="data_clear_title">Azzerare tutti i dati?</string>
+    <string name="data_clear_body">Cancella %1$d paesi e %2$d luoghi. Non si torna indietro: se ci tieni, esporta prima un backup.</string>
+    <string name="data_clear_confirm">Azzera</string>
+    <string name="data_cleared">Dati azzerati.</string>
+
+    <string name="about_version">Versione %1$s</string>
+    <string name="about_credits">Confini e città: Natural Earth, dominio pubblico. Globo: globe.gl e three.js. Bandiere: Twemoji.</string>
+    <string name="about_offline">L’app non dichiara il permesso INTERNET e non fa una sola richiesta di rete. Gli unici dati che escono dal telefono sono i backup che esporti tu.</string>
+
 </resources>

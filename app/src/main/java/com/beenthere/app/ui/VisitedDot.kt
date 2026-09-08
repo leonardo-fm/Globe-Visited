@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.beenthere.app.R
 import com.beenthere.app.ui.theme.BorderGray
 import com.beenthere.app.ui.theme.Land
-import com.beenthere.app.ui.theme.Visited
+import com.beenthere.app.ui.theme.LocalVisitedColor
 
 /**
  * Il pallino che segna/desegna un paese dalla UI nativa. E' la via di selezione
@@ -38,7 +38,7 @@ fun VisitedDot(
      * il bianco dei pin: acceso vuol dire "e' sul globo", non "visitato", e i
      * due significati non devono confondersi.
      */
-    activeColor: Color = Visited,
+    activeColor: Color = LocalVisitedColor.current,
     @StringRes onDescription: Int = R.string.unmark_visited,
     @StringRes offDescription: Int = R.string.mark_visited
 ) {
