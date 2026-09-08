@@ -30,14 +30,33 @@ object VisitedColors {
         Choice("#A78BFA", R.string.color_purple)
     )
 
+    private val HEX = Regex("^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
+
     /**
-     * Riporta a un colore della tavolozza qualunque cosa arrivi da DataStore.
-     * Serve perche' il valore salvato sopravvive agli aggiornamenti dell'app:
-     * se un domani un colore viene tolto, chi ce l'aveva non si ritrova con un
-     * globo di un colore che il resto della UI non conosce.
+     * Da quello che l'utente ha scritto a un `#RRGGBB` maiuscolo, o null se non
+     * e' un colore. Accetta anche la forma corta a tre cifre e il cancelletto
+     * mancante, perche' e' quello che uno scrive davvero.
+     *
+     * E' l'unico punto in cui si decide se un codice va bene: chi lo usa non
+     * deve piu' controllare niente.
      */
-    fun sanitize(raw: String?): String {
-        val wanted = raw?.trim()?.uppercase() ?: return DEFAULT
-        return ALL.firstOrNull { it.hex == wanted }?.hex ?: DEFAULT
+    fun normalize(raw: String?): String? {
+        val text = raw?.trim().orEmpty()
+        val digits = HEX.find(text)?.groupValues?.get(1) ?: return null
+        val full = if (digits.length == 3) {
+            digits.map { "$it$it" }.joinToString("")
+        } else {
+            digits
+        }
+        return "#" + full.uppercase()
     }
+
+    /**
+     * Quello che arriva da DataStore, reso sicuro. Non e' piu' un controllo di
+     * appartenenza alla tavolozza - da quando il colore si puo' scrivere a
+     * mano, qualunque esadecimale valido e' legittimo - ma resta indispensabile:
+     * garantisce a chi legge che la stringa sia sempre convertibile in colore,
+     * e senza questa promessa il parse esploderebbe all'avvio.
+     */
+    fun sanitize(raw: String?): String = normalize(raw) ?: DEFAULT
 }

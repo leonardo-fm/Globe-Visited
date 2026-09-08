@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
@@ -158,7 +159,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     // Il colore scelto arriva qui a tutta la UI nativa: contatore, bordo della
     // ricerca, pallini, cursore. Il globo lo riceve per conto suo, via comando.
     val accent = remember(state.visitedColor) {
-        Color(android.graphics.Color.parseColor(state.visitedColor))
+        parseOrDefault(state.visitedColor)
     }
 
     ProvideAppLanguage(state.language) {
@@ -212,9 +213,13 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
                     .padding(12.dp)
                     .widthIn(max = 520.dp)
             ) {
+                // Contatore a sinistra, ingranaggio a destra: si allinea al
+                // bordo destro della barra di ricerca qui sotto, che e' quella
+                // a dare la larghezza alla colonna.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     CounterChip(
                         visitedCount = state.visitedCount,

@@ -48,6 +48,8 @@
     <string name="settings_section_data">Data</string>
     <string name="settings_section_about">About</string>
     <string name="settings_color">Visited colour</string>
+    <string name="settings_color_code">Colour code</string>
+    <string name="settings_color_code_invalid">Needs a hex code, like #FF8C1A (#F81 works too).</string>
     <string name="settings_pins">Show places on the globe</string>
     <string name="settings_pins_hint">Turning this off hides the pins but keeps them saved: turn it back on and they return.</string>
 

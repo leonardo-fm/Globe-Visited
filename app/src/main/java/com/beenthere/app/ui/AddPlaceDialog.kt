@@ -117,7 +117,7 @@ fun AddPlaceDialog(
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+internal fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = OnPanel,
     unfocusedTextColor = OnPanel,
     focusedBorderColor = LocalVisitedColor.current,

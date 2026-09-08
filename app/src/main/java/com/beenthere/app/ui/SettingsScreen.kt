@@ -27,10 +27,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -129,6 +134,7 @@ fun SettingsScreen(
             SectionHeader(appString(R.string.settings_section_globe))
             SettingLabel(appString(R.string.settings_color))
             ColorPicker(selected = visitedColor, onSelect = onVisitedColorChange)
+            ColorCodeField(current = visitedColor, onAccept = onVisitedColorChange)
             SettingsToggle(
                 label = appString(R.string.settings_pins),
                 hint = appString(R.string.settings_pins_hint),
@@ -227,7 +233,7 @@ private fun ColorPicker(selected: String, onSelect: (String) -> Unit) {
     ) {
         VisitedColors.ALL.forEach { choice ->
             val isSelected = choice.hex == selected
-            val swatch = Color(android.graphics.Color.parseColor(choice.hex))
+            val swatch = parseOrDefault(choice.hex)
             val description = appString(choice.label)
             Box(
                 contentAlignment = Alignment.Center,
@@ -252,6 +258,71 @@ private fun ColorPicker(selected: String, onSelect: (String) -> Unit) {
         }
     }
 }
+
+/**
+ * Il colore scritto a mano, per chi ne vuole uno che non e' in tavolozza.
+ *
+ * Si applica appena il codice e' valido, senza un tasto di conferma: mentre lo
+ * scrivi il globo e' li' dietro che cambia, ed e' il modo piu' rapido di
+ * capire se quel colore ti piace davvero.
+ *
+ * Nota: qui si puo' scegliere un colore che sul globo non si vede - un grigio
+ * vicino a quello della terra, un blu vicino a quello dell'oceano. E' una
+ * conseguenza voluta dell'aver aperto il campo; le sei pastiglie restano li'
+ * come via di ritorno.
+ */
+@Composable
+private fun ColorCodeField(current: String, onAccept: (String) -> Unit) {
+    // Ripartire dal colore corrente ogni volta che cambia da fuori: toccando
+    // una pastiglia il campo deve mostrare quel codice, non quello di prima.
+    var typed by remember(current) { mutableStateOf(current) }
+    val normalized = VisitedColors.normalize(typed)
+    val isValid = normalized != null
+
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+        OutlinedTextField(
+            value = typed,
+            onValueChange = { raw ->
+                typed = raw
+                VisitedColors.normalize(raw)?.let { if (it != current) onAccept(it) }
+            },
+            singleLine = true,
+            isError = typed.isNotBlank() && !isValid,
+            label = { Text(appString(R.string.settings_color_code)) },
+            placeholder = { Text(VisitedColors.DEFAULT) },
+            trailingIcon = {
+                // Anteprima: mostra il colore scritto finche' e' valido, e
+                // l'ultimo buono quando non lo e'.
+                Box(
+                    Modifier
+                        .padding(end = 4.dp)
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(parseOrDefault(normalized ?: current))
+                )
+            },
+            colors = fieldColors(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (typed.isNotBlank() && !isValid) {
+            Text(
+                text = appString(R.string.settings_color_code_invalid),
+                color = DangerRed,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(start = 4.dp, top = 6.dp)
+            )
+        }
+    }
+}
+
+/**
+ * L'unico posto dove un esadecimale diventa un colore. Non lancia mai: i codici
+ * arrivano da un campo di testo, e un carattere di troppo non deve poter
+ * chiudere l'app.
+ */
+internal fun parseOrDefault(hex: String): Color =
+    Color(android.graphics.Color.parseColor(VisitedColors.sanitize(hex)))
 
 @Composable
 private fun SectionHeader(text: String) {

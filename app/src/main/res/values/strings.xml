@@ -50,6 +50,8 @@
     <string name="settings_section_data">Dati</string>
     <string name="settings_section_about">Informazioni</string>
     <string name="settings_color">Colore dei visitati</string>
+    <string name="settings_color_code">Codice colore</string>
+    <string name="settings_color_code_invalid">Serve un codice esadecimale, tipo #FF8C1A (va bene anche #F81).</string>
     <string name="settings_pins">Mostra i luoghi sul globo</string>
     <string name="settings_pins_hint">Spegnendolo i pin spariscono dal globo, ma restano salvati: li ritrovi riaccendendo.</string>
 

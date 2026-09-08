@@ -117,7 +117,8 @@
   #chip b { color: var(--visited); font-weight: 700; }
 
   /* Contatore e ingranaggio: stessa pasta, come in BeenThereScreen.kt. */
-  #topline { display: flex; align-items: center; gap: 8px; }
+  /* Contatore a sinistra, ingranaggio a destra, sul bordo della ricerca. */
+  #topline { display: flex; align-items: center; justify-content: space-between; width: 100%; }
   #gear {
     display: flex; align-items: center; justify-content: center;
     color: var(--on-panel);
@@ -181,6 +182,27 @@
   }
   #settings .swatch svg { width: 20px; height: 20px; display: none; }
   #settings .swatch.on svg { display: block; }
+
+  #settings .code-field { padding: 4px 20px 2px; }
+  #settings .code-field .field-out { display: block; }
+  #settings .code-field .field-out > span:first-child {
+    display: block; font-size: 12px; color: var(--on-muted); margin-bottom: 4px;
+  }
+  #settings .code-field .line {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
+  }
+  #settings .code-field .field-out.bad .line { border-color: #FF6B6B; }
+  #settings .code-field input {
+    flex: 1; background: none; border: 0; outline: none;
+    color: var(--on-panel); font: 15px var(--font);
+  }
+  #settings .code-field .preview {
+    flex: none; width: 26px; height: 26px; border-radius: 50%;
+  }
+  #settings .code-field .err {
+    font-size: 12px; line-height: 16px; color: #FF6B6B; padding: 6px 4px 0;
+  }
 
   #settings .toggle-row {
     display: flex; align-items: center; gap: 12px;
@@ -467,6 +489,19 @@
     pins:    'beenthere.harness.pins'
   };
 
+  /**
+   * VisitedColors.normalize: da quello che l'utente scrive a un #RRGGBB
+   * maiuscolo, o null se non e' un colore. Accetta la forma corta a tre cifre
+   * e il cancelletto mancante.
+   */
+  function normalizeColor(raw) {
+    var m = /^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.exec(String(raw == null ? '' : raw).trim());
+    if (!m) return null;
+    var d = m[1];
+    if (d.length === 3) d = d[0] + d[0] + d[1] + d[1] + d[2] + d[2];
+    return '#' + d.toUpperCase();
+  }
+
   // Deve restare uguale a VisitedColors.kt: se cambia li', cambia qui.
   var COLORS = [
     { hex: '#FF8C1A', label: 'color_orange' },
@@ -752,9 +787,9 @@
       var p = JSON.parse(localStorage.getItem(LS.places) || '[]');
       S.places = (Array.isArray(p) ? p : []).map(placeFromJson).filter(Boolean);
       S.lang = localStorage.getItem(LS.lang) === 'en' ? 'en' : 'it';
-      // sanitize() di VisitedColors: quello che non e' in tavolozza torna al default
-      var c = String(localStorage.getItem(LS.color) || '').toUpperCase();
-      S.visitedColor = COLORS.some(function (x) { return x.hex === c; }) ? c : DEFAULT_COLOR;
+      // sanitize() di VisitedColors: qualunque esadecimale valido va bene, da
+      // quando il colore si puo' scrivere a mano; il resto torna al default.
+      S.visitedColor = normalizeColor(localStorage.getItem(LS.color)) || DEFAULT_COLOR;
       S.pinsVisible = localStorage.getItem(LS.pins) !== '0';
     } catch (e) { log('err', 'lettura fallita: ' + e.message); }
   }
@@ -1196,6 +1231,7 @@
     COLORS.forEach(function (c) {
       var b = document.createElement('button');
       b.className = 'swatch' + (c.hex === S.visitedColor ? ' on' : '');
+      b.dataset.hex = c.hex;
       b.style.background = c.hex;
       b.title = t(c.label);
       b.setAttribute('aria-label', t(c.label));
@@ -1212,6 +1248,7 @@
       swatches.appendChild(b);
     });
     page.appendChild(swatches);
+    page.appendChild(colorCodeField());
 
     page.appendChild(settingsToggle(
       t('settings_pins'), t('settings_pins_hint'), S.pinsVisible,
@@ -1257,6 +1294,62 @@
     });
     page.appendChild(about);
   }
+
+  /**
+   * Il colore scritto a mano. Si applica appena il codice e' valido, senza
+   * conferma: il globo e' li' dietro che cambia mentre scrivi.
+   */
+  function colorCodeField() {
+    var wrap = document.createElement('div');
+    wrap.className = 'code-field';
+
+    var row = document.createElement('label');
+    row.className = 'field-out';
+    var cap = document.createElement('span');
+    cap.textContent = t('settings_color_code');
+    var line = document.createElement('span');
+    line.className = 'line';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = S.visitedColor;
+    input.placeholder = DEFAULT_COLOR;
+    input.spellcheck = false;
+    var dot = document.createElement('i');
+    dot.className = 'preview';
+    dot.style.background = S.visitedColor;
+    line.appendChild(input);
+    line.appendChild(dot);
+    row.appendChild(cap);
+    row.appendChild(line);
+
+    var err = document.createElement('div');
+    err.className = 'err';
+    err.textContent = t('settings_color_code_invalid');
+    err.hidden = true;
+
+    input.addEventListener('input', function () {
+      var norm = normalizeColor(input.value);
+      var blank = input.value.trim() === '';
+      err.hidden = blank || !!norm;
+      row.classList.toggle('bad', !blank && !norm);
+      if (!norm) return;
+      dot.style.background = norm;
+      if (norm === S.visitedColor) return;
+      S.visitedColor = norm;
+      save();
+      applyAccent();
+      // Le pastiglie: la spunta si sposta, o sparisce se il colore non e' loro.
+      Array.prototype.forEach.call(page_swatches(), function (b) {
+        b.classList.toggle('on', b.dataset.hex === norm);
+      });
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(err);
+    return wrap;
+  }
+
+  function page_swatches() { return $('settings').querySelectorAll('.swatch'); }
 
   function settingsToggle(label, hint, checked, onChange) {
     var row = document.createElement('div');

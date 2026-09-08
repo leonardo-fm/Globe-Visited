@@ -5,6 +5,6 @@
 - [Provare index.html con Chrome](verifica-della-pagina-con-chrome.md) — l'estensione non c'è: Chrome headless da riga di comando, e perché il ciclo di disegno va provato con un Chrome vero
 - [Decisioni di prodotto di Been There](been-there-decisioni-prodotto.md) — dataset 50m, tocco = selezione + popup, bandiere emoji, lingua manuale: concordate, non ridiscuterle
 - [L'utente vuole i compromessi espliciti](utente-vuole-compromessi-espliciti.md) — prima domande e requisiti, poi codice; niente scelte silenziose
-- [Manca la toolchain Android](ambiente-senza-toolchain-android.md) — solo JDK 21: il Kotlin non si compila da qui, servono controlli manuali
+- [L'SDK Android c'è](ambiente-senza-toolchain-android.md) — da questa macchina si compila con `./gradlew compileDebugKotlin`: farlo sempre prima di consegnare
 - [Gli heredoc Bash mangiano i backslash](bash-heredoc-mangia-backslash.md) — usare Write/Edit per scrivere file, non `<<'EOF'`
 - [Lavorare a fasi verificabili](lavorare-a-fasi-verificabili.md) — i lavori grossi vanno tagliati per funzione visibile, e ogni fase deve poter essere installata e provata da lui
