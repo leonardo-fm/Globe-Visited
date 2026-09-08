@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- GENERATO da tools/build-icon.mjs -->
 <resources>
-    <color name="ic_launcher_background">#1B4B8F</color>
+    <!-- Lo spazio dietro il globo: lo stesso nero su cui l'app disegna. -->
+    <color name="ic_launcher_background">#05070F</color>
 </resources>
