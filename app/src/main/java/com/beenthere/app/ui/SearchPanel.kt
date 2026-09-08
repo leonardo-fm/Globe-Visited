@@ -26,10 +26,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -65,6 +61,11 @@ import com.beenthere.app.ui.theme.Visited
  * Tocco sulla riga: il globo ruota e zooma sul paese o sulla citta'.
  * Tocco sul pallino: segna/desegna visitato, senza muovere il globo.
  *
+ * La lista dei risultati ha uno stato suo, `resultsOpen`, separato dal testo:
+ * toccando il globo si chiude ma la parola scritta resta, cosi' si torna sulla
+ * barra e la si corregge o si cancella a mano con la X. Prima il testo si
+ * azzerava da solo a ogni tocco; e' stato tolto su richiesta.
+ *
  * Le citta' stanno sotto i paesi, in una sezione a parte: sono migliaia contro
  * 242, e mescolarle farebbe sparire il paese cercato in mezzo ai suoi capoluoghi.
  */
@@ -73,6 +74,8 @@ import com.beenthere.app.ui.theme.Visited
 fun SearchPanel(
     query: String,
     onQueryChange: (String) -> Unit,
+    resultsOpen: Boolean,
+    onResultsOpenChange: (Boolean) -> Unit,
     results: List<Country>,
     placeResults: List<Place>,
     catalog: CountryCatalog,
@@ -90,33 +93,21 @@ fun SearchPanel(
     val keyboard = LocalSoftwareKeyboardController.current
     val shape = RoundedCornerShape(14.dp)
 
-    // Tornando sulla ricerca si ricomincia da capo, invece di trovarci la parola
-    // di prima. La regola che conta e' quella sul TOCCO, piu' sotto: ogni volta
-    // che si tocca la barra il testo sparisce.
+    // Il fuoco e' il caso pulito - si esce dalla ricerca e la lista si chiude
+    // da sola - ma NON e' affidabile: toccando il globo il fuoco se lo prende
+    // la WebView, che e' una View Android dentro una AndroidView, e Compose non
+    // sempre se ne accorge. Se la perdita di fuoco non arriva mai, per Compose
+    // il campo non ha mai smesso di essere a fuoco e qui non parte niente.
+    // Per questo la chiusura vera la comanda il tocco sul globo, in
+    // BeenThereScreen, che arriva sempre; questo qui e' solo il di piu'.
     //
-    // Il fuoco da solo non basta, ed e' il motivo per cui questo era ancora
-    // rotto: toccando il globo il fuoco se lo prende la WebView, che e' una
-    // View Android dentro una AndroidView, e Compose non sempre se ne accorge.
-    // Se la perdita di fuoco non arriva mai, per Compose il campo non ha mai
-    // smesso di essere a fuoco: ritoccandolo non c'e' nessun CAMBIO di fuoco da
-    // notificare, e un controllo basato su onFocusChanged non parte proprio.
-    // Il tocco invece arriva sempre.
-    //
-    // Le due righe qui sotto restano per il caso pulito - si esce dalla ricerca
-    // e la lista dei risultati si chiude senza doverla toccare. Il fuoco si
-    // guarda sul GRUPPO e non sul solo campo di testo perche' dentro il
-    // pannello c'e' anche il pallino di ogni riga: se rubasse il fuoco al
-    // campo, un controllo sul solo campo chiuderebbe la lista proprio mentre la
-    // si sta usando.
-    var hadFocus by remember { mutableStateOf(false) }
-
+    // Il fuoco si guarda sul GRUPPO e non sul solo campo di testo perche'
+    // dentro il pannello c'e' anche il pallino di ogni riga: se rubasse il
+    // fuoco al campo, un controllo sul solo campo chiuderebbe la lista proprio
+    // mentre la si sta usando.
     Column(
         modifier = modifier
-            .onFocusChanged { state ->
-                if (state.hasFocus && !hadFocus) onQueryChange("")
-                if (!state.hasFocus) onQueryChange("")
-                hadFocus = state.hasFocus
-            }
+            .onFocusChanged { state -> onResultsOpenChange(state.hasFocus) }
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -128,23 +119,22 @@ fun SearchPanel(
                 .clip(shape)
                 .background(Panel, shape)
                 .border(1.dp, if (query.isEmpty()) BorderGray else Visited, shape)
-                // Toccare la barra azzera la ricerca, sempre. Il gesto si
-                // guarda qui sul contenitore e non dentro il campo di testo:
-                // arriva nella passata Main, cioe' dopo che il campo l'ha
-                // gestito, e con requireUnconsumed = false lo vediamo anche se
-                // il campo l'ha consumato per piazzare il cursore. Cosi' il
-                // tocco fa il suo lavoro normale - tastiera e cursore - e noi
-                // in piu' svuotiamo il testo.
+                // Toccare la barra riapre la lista, sempre - il testo non si
+                // tocca. Serve perche' il fuoco qui sopra non e' affidabile:
+                // tornando dalla WebView spesso per Compose il campo non ha mai
+                // smesso di essere a fuoco, quindi non c'e' nessun cambio da
+                // notificare e la lista resterebbe chiusa.
                 //
-                // Il prezzo: se stai scrivendo e tocchi il campo per correggere
-                // una lettera a meta' parola, riparti da vuoto. E' il
-                // comportamento chiesto ("ogni volta che clicco sulla ricerca
-                // il nome sparisce") e su un campo a riga sola conta poco:
-                // si riscrive, mentre ritrovarsi la citta' di ieri no.
+                // Il gesto si guarda sul contenitore e non dentro il campo di
+                // testo: arriva nella passata Main, cioe' dopo che il campo
+                // l'ha gestito, e con requireUnconsumed = false lo vediamo
+                // anche se il campo l'ha consumato per piazzare il cursore.
+                // Cosi' il tocco fa il suo lavoro normale - tastiera e cursore
+                // - e noi in piu' riapriamo la lista.
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
-                        onQueryChange("")
+                        onResultsOpenChange(true)
                     }
                 }
                 .padding(horizontal = 14.dp, vertical = 12.dp)
@@ -197,7 +187,7 @@ fun SearchPanel(
             }
         }
 
-        if (query.isNotEmpty()) {
+        if (query.isNotEmpty() && resultsOpen) {
             Box(
                 Modifier
                     .fillMaxWidth()

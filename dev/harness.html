@@ -370,6 +370,7 @@
     places: [],             // luoghi sul globo (catalogo + custom)
     lang: 'it',
     query: '',
+    resultsOpen: false,     // lista dei risultati: stato separato dal testo
     draft: null,
     pendingImport: null,
     sheetOpen: false
@@ -713,7 +714,9 @@
     var box = $('results');
     $('bar').classList.toggle('active', S.query.length > 0);
 
-    if (!S.query) { box.hidden = true; box.textContent = ''; return; }
+    // Come in SearchPanel.kt: la lista ha uno stato suo, separato dal testo.
+    // Toccando il globo si chiude ma la parola resta scritta nel campo.
+    if (!S.query || !S.resultsOpen) { box.hidden = true; box.textContent = ''; return; }
 
     var countries = searchCountries(S.query, 25);
     // I pin a mano vanno per primi: uno piantato per sbaglio in mezzo al
@@ -867,20 +870,37 @@
     var input = $('q');
     var bar = $('bar');
 
+    // Scrivere riapre sempre la lista: se l'hai chiusa toccando il globo e poi
+    // correggi una lettera, i risultati tornano.
     input.addEventListener('input', function () {
       S.query = input.value;
+      S.resultsOpen = true;
       renderResults();
     });
 
-    // Toccare la barra azzera la ricerca, sempre. Replica il pointerInput di
-    // SearchPanel.kt: sta sul contenitore, non sul campo, e parte dopo che il
-    // campo ha gia' fatto il suo (fuoco e cursore).
+    // Toccare la barra riapre la lista - il testo non si tocca. Replica il
+    // pointerInput di SearchPanel.kt: sta sul contenitore, non sul campo, e
+    // parte dopo che il campo ha gia' fatto il suo (fuoco e cursore).
     //
     // ATTENZIONE: sul telefono questa regola serve a rimediare al fuoco che
     // passa alla WebView, cosa che qui NON succede. Che funzioni qui non
     // dimostra che funzioni li'.
     bar.addEventListener('pointerdown', function () {
-      if (S.query) setQuery('');
+      S.resultsOpen = true;
+      renderResults();
+    });
+
+    // Toccare il globo chiude la lista e lascia il testo dov'e'. Sul telefono
+    // e' un pointerInput nella passata Initial attorno alla WebView, qui basta
+    // ascoltare dentro l'iframe: e' della stessa origine.
+    frame.addEventListener('load', function () {
+      var doc = frame.contentDocument;
+      if (!doc) return;
+      doc.addEventListener('pointerdown', function () {
+        if (!S.resultsOpen) return;
+        S.resultsOpen = false;
+        renderResults();
+      }, true);
     });
 
     $('clear').addEventListener('click', function () { setQuery(''); });

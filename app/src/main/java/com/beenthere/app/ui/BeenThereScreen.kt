@@ -1,5 +1,7 @@
 package com.beenthere.app.ui
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,8 +29,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -47,7 +53,7 @@ import com.beenthere.app.ui.theme.PanelSolid
 import com.beenthere.app.ui.theme.Visited
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
 
@@ -80,6 +86,10 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     var query by remember { mutableStateOf("") }
+    // Aperta/chiusa la lista dei risultati, a parte dal testo: si tocca il globo
+    // e la lista sparisce, ma la parola scritta resta nel campo da correggere o
+    // cancellare a mano.
+    var resultsOpen by remember { mutableStateOf(false) }
     var sheetOpen by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
@@ -117,6 +127,7 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     ) { uri -> uri?.let(viewModel::importFrom) }
 
     val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val noticeText = notice?.let {
         appString(
             when (it) {
@@ -137,11 +148,37 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     ProvideAppLanguage(state.language) {
         Box(Modifier.fillMaxSize()) {
 
-            GlobeWebView(
-                controller = controller,
-                bridge = bridge,
-                modifier = Modifier.fillMaxSize()
-            )
+            // Toccare il globo chiude la lista dei risultati e abbassa la
+            // tastiera, lasciando il testo scritto dov'e'. E' il segnale
+            // affidabile: il fuoco no, perche' se lo prende la WebView e
+            // Compose spesso non se ne accorge (vedi SearchPanel).
+            //
+            // Il gesto si guarda nella passata INITIAL, che scende dal padre al
+            // figlio, cosi' lo vediamo prima che la WebView se lo prenda; e non
+            // lo consumiamo, quindi il globo continua a girare e a rispondere ai
+            // tocchi come sempre. Il riquadro sta sotto la Column del pannello:
+            // i tocchi sulla barra e sulle righe non arrivano fin qui, perche'
+            // Box consegna al figlio piu' in alto e si ferma li'.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = PointerEventPass.Initial
+                            )
+                            resultsOpen = false
+                            keyboard?.hide()
+                        }
+                    }
+            ) {
+                GlobeWebView(
+                    controller = controller,
+                    bridge = bridge,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -167,7 +204,11 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
 
                 SearchPanel(
                     query = query,
-                    onQueryChange = { query = it },
+                    // Scrivere riapre sempre la lista: se hai chiuso toccando il
+                    // globo e poi correggi una lettera, i risultati tornano.
+                    onQueryChange = { query = it; resultsOpen = true },
+                    resultsOpen = resultsOpen,
+                    onResultsOpenChange = { resultsOpen = it },
                     results = results,
                     placeResults = placeResults,
                     catalog = state.catalog,
