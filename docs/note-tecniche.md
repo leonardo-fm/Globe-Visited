@@ -94,8 +94,9 @@ Tre scelte che riducono il file senza perdere niente:
   volte su 4.205 (Firenze, Venezia, Città del Vaticano); nelle altre ripeterlo
   raddoppierebbe il campo per niente. Chi legge ricade sul nome inglese, la
   stessa regola che vale per `NAME_IT` nei paesi;
-- **coordinate a tre decimali**, cioè ~110 m: il pin è un puntino su un globo,
-  e a zoom massimo un pixel vale già più di un chilometro;
+- **coordinate a tre decimali**, cioè ~110 m: il pin è un puntino su un globo, e
+  anche a zoom massimo un pixel vale ~900 m (era ~2 km prima che `MIN_ALT`
+  scendesse a 0,12), cioè otto volte i 110 m;
 - **l'ordine del file è per popolazione decrescente**, e la ricerca lo conserva
   dentro ogni gruppo di match invece di riordinare alfabeticamente. È il motivo
   per cui cercando "new york" esce prima New York City e non New York Mills.
@@ -562,6 +563,29 @@ di taglio: è la via per controllare come sta andando sul telefono da
 ricalcola dall'altitudine a ogni evento `change` dei controlli, quindi qualsiasi
 valore scritto all'avvio viene sovrascritto al primo movimento. `minDistance`,
 `maxDistance`, `enablePan` e il damping invece restano.
+
+I due limiti di zoom non si scrivono più in unità di mondo ma escono da
+`MIN_ALT` e `MAX_ALT`, in altitudine, che è l'unità in cui ragiona tutto il
+resto del file. **`MIN_ALT` è passato da 0,30 a 0,12 il 2026-09-09**, su
+richiesta: piantare un pin con la pressione lunga vuol dire centrare un punto
+col polpastrello, e a 0,30 un dito da 9 mm copriva ~90 km di superficie. La
+scala a schermo va come `1/(d−R)`, quindi la superficie si ingrandisce di 2,5
+volte e lo stesso dito ne copre ~36.
+
+Due effetti collaterali che il conto da solo non mostra e che vanno guardati in
+uno screenshot se un domani si scende ancora. Primo: sotto altitudine 0,25 il
+`near` di `updateClipPlanes()` (`d − 1,25 R`) va sotto zero e si appoggia al suo
+minimo di 0,5 — è la prima volta che quel minimo entra in gioco, e non fa danno
+solo perché da vicino la geometria è vicina (a 0,12 l'orizzonte sta a ~50
+unità, quanto di profondità sotto 3e‑4 a 24 bit). Secondo: a 112 la camera sta
+**dentro** la sfera dell'atmosfera, che è a 1,15 R; regge perché è disegnata
+sulle facce interne. Il vero limite però non è tecnico ma il dataset —
+`simplify 40%`, `precision 0.001` — e a 0,12 la squadratura delle coste comincia
+a vedersi.
+
+Il volo della ricerca (`CITY_ALT`) resta a 0,32 e **non** segue il limite:
+prima ci coincideva quasi, adesso è una scelta: atterrare dalla ricerca già allo
+zoom massimo toglie il riferimento di dove si è finiti.
 
 ## La schermata di caricamento
 

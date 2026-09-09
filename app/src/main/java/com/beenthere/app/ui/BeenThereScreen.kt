@@ -138,23 +138,6 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
 
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val noticeText = notice?.let {
-        appString(
-            when (it) {
-                BackupNotice.EXPORT_OK -> R.string.backup_export_ok
-                BackupNotice.EXPORT_FAIL -> R.string.backup_export_fail
-                BackupNotice.IMPORT_FAIL -> R.string.backup_import_fail
-                BackupNotice.IMPORT_OK -> R.string.backup_import_ok
-                BackupNotice.CLEARED -> R.string.data_cleared
-            }
-        )
-    }
-    LaunchedEffect(notice) {
-        if (noticeText != null) {
-            Toast.makeText(context, noticeText, Toast.LENGTH_SHORT).show()
-            viewModel.clearNotice()
-        }
-    }
 
     // Il colore scelto arriva qui a tutta la UI nativa: contatore, bordo della
     // ricerca, pallini, cursore. Il globo lo riceve per conto suo, via comando.
@@ -163,6 +146,31 @@ fun BeenThereScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     ProvideAppLanguage(state.language) {
+      // Il messaggio di esito sta DENTRO ProvideAppLanguage, e non e' un
+      // dettaglio di stile: appString legge LocalAppResources, che qui fuori
+      // non ha valore e il cui default e' un error(). Finche' notice e' null il
+      // ramo non viene percorso e non succede niente; al primo esito - export,
+      // import o azzeramento - la lettura parte e l'app cade in ricomposizione.
+      // Ogni altra chiamata ad appString in questo file e' gia' piu' sotto, per
+      // lo stesso motivo.
+      val noticeText = notice?.let {
+          appString(
+              when (it) {
+                  BackupNotice.EXPORT_OK -> R.string.backup_export_ok
+                  BackupNotice.EXPORT_FAIL -> R.string.backup_export_fail
+                  BackupNotice.IMPORT_FAIL -> R.string.backup_import_fail
+                  BackupNotice.IMPORT_OK -> R.string.backup_import_ok
+                  BackupNotice.CLEARED -> R.string.data_cleared
+              }
+          )
+      }
+      LaunchedEffect(notice) {
+          if (noticeText != null) {
+              Toast.makeText(context, noticeText, Toast.LENGTH_SHORT).show()
+              viewModel.clearNotice()
+          }
+      }
+
       CompositionLocalProvider(LocalVisitedColor provides accent) {
         Box(Modifier.fillMaxSize()) {
 

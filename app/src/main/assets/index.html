@@ -335,6 +335,39 @@
   var SEL_ALT    = CAP_ALT + 2 * SHELL_GAP;  // contorno del paese selezionato
   var POPUP_ALT  = CAP_ALT + 4 * SHELL_GAP;  // ancora della card
 
+  // LIMITI DI ZOOM, in altitudine (multipli del raggio del globo: 0 e' la
+  // superficie). Da qui escono minDistance e maxDistance dei controlli.
+  //
+  // MIN_ALT era 0,30 (distanza 130 su un globo di raggio 100). Alzato lo zoom
+  // su richiesta dell'utente: piantare un pin con la pressione lunga vuol dire
+  // centrare un punto col polpastrello, e a 0,30 un dito da 9 mm ne copriva
+  // ~90 km. La scala a schermo va come 1/(d-R), quindi passando a 0,12 la
+  // superficie si ingrandisce di 2,5 volte e lo stesso dito ne copre ~36.
+  //
+  // Perche' 0,12 e non meno. Due cose si stringono scendendo, e la seconda si
+  // vede gia' a occhio:
+  //
+  // - i piani di taglio. `near` vale d - 1,25 R, quindi sotto altitudine 0,25
+  //   finisce sotto zero e si appoggia al minimo di 0,5: e' la prima volta che
+  //   quel minimo entra in gioco. Non fa danno perche' da vicino anche la
+  //   geometria e' vicina - a 0,12 l'orizzonte del globo sta a ~50 unita' - e
+  //   il quanto di profondita' resta sotto 3e-4 unita', cioe' trecento volte
+  //   meno del gradino fra i gusci con un depth buffer a 24 bit. Ma quel
+  //   margine e' cio' che tiene fermi i confini, e scendendo si consuma;
+  // - il dataset e' semplificato al 40% con precisione 0,001 e i pin sono
+  //   salvati a tre decimali (~110 m). A 0,12 la squadratura delle coste
+  //   comincia a vedersi (verificato su Italia e Croazia): piu' vicino non si
+  //   guadagna dettaglio, si guarda solo l'approssimazione piu' da presso.
+  //
+  // La camera a 112 sta DENTRO la sfera dell'atmosfera, che e' a 1,15 R. Non e'
+  // un problema - e' disegnata sulle facce interne, e nella prova a 0,12 non
+  // vela ne' copre niente - ma e' il motivo per cui vale la pena guardare uno
+  // screenshot invece di fidarsi del conto, se un domani si scende ancora.
+  //
+  // MAX_ALT resta 6,0 (distanza 700): il globo intero sta gia' nell'inquadratura.
+  var MIN_ALT = 0.12;
+  var MAX_ALT = 6.0;
+
   // I PIN DEI LUOGHI.
   //
   // Bianco perche' deve leggersi sia sul grigio del non visitato sia
@@ -2274,10 +2307,13 @@
 
   // Volo su una coordinata qualsiasi. Serve alle citta', che non sono feature
   // del GeoJSON e quindi non hanno un focusOf() da cui ricavare l'inquadratura.
-  // L'altitudine e' fissa e appena sopra il limite di zoom dei controlli
-  // (minDistance 130 su un globo di raggio 100, cioe' altitudine 0,30): un
-  // valore piu' basso verrebbe comunque bloccato da OrbitControls, e la camera
-  // finirebbe a litigare con il damping a fine volo.
+  // L'altitudine e' fissa. Fino al 2026-09-09 era anche il limite di zoom dei
+  // controlli, e il commento diceva di non scendere sotto perche' OrbitControls
+  // avrebbe bloccato la camera a fine volo; ora MIN_ALT e' 0,12 e il vincolo non
+  // c'e' piu'. Il valore resta questo per scelta: arrivare dalla ricerca
+  // direttamente allo zoom massimo toglie il riferimento di dove si e'
+  // atterrati. Chi vuole avvicinarsi lo fa con la pinch, che ora arriva
+  // molto piu' vicino.
   var CITY_ALT = 0.32;
   function flyToCoords(lat, lng, ms) {
     if (!world) return false;
@@ -2636,8 +2672,10 @@
 
     try {
       var c = world.controls();
+      var R = world.getGlobeRadius();
       c.enableDamping = true; c.dampingFactor = 0.12;
-      c.minDistance = 130; c.maxDistance = 700;   // limiti di zoom / pinch
+      c.minDistance = R * (1 + MIN_ALT);
+      c.maxDistance = R * (1 + MAX_ALT);
       c.enablePan = false;
       // rotateSpeed e zoomSpeed non si impostano qui: globe.gl li ricalcola
       // dall'altitudine a ogni evento change dei controlli, quindi qualsiasi

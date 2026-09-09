@@ -1,10 +1,10 @@
-- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — rendering riscritto e confermato sull'S10e; poi dataset a risoluzione più alta e schermata di caricamento, questi ancora da provare sul telefono
+- [Stato del lavoro su Been There](been-there-stato-lavoro.md) — al 9 settembre 2026: impostazioni, colore scelto dall'utente, icona nuova, tutto confermato sull'S10e
 - [Le diagnosi dell'utente sono buone ma parziali](diagnosi-utente-parziali.md) — segnala il difetto con una causa già abbozzata: va presa sul serio e verificata fino in fondo
-- [Prove da fare sul telefono](prove-da-fare-sul-telefono.md) — le 7 cose che l'utente collauda sull'S10e la notte fra l'8 e il 9 settembre 2026, col sintomo da guardare per ognuna
+- [L'icona è generata dai confini](icona-generata-dai-confini.md) — `tools/build-icon.mjs` proietta `countries.geojson`: i drawable non si toccano a mano, si rilancia lo script
 - [Banco di prova nel browser](banco-di-prova-web.md) — `dev/harness.html`: server dalla radice del repo, ponte finto per spegnere il prototipo, e cosa quella prova non dimostra
 - [Provare index.html con Chrome](verifica-della-pagina-con-chrome.md) — l'estensione non c'è: Chrome headless da riga di comando, e perché il ciclo di disegno va provato con un Chrome vero
 - [Decisioni di prodotto di Been There](been-there-decisioni-prodotto.md) — dataset 50m, tocco = selezione + popup, bandiere emoji, lingua manuale: concordate, non ridiscuterle
 - [L'utente vuole i compromessi espliciti](utente-vuole-compromessi-espliciti.md) — prima domande e requisiti, poi codice; niente scelte silenziose
-- [L'SDK Android c'è](ambiente-senza-toolchain-android.md) — da questa macchina si compila con `./gradlew compileDebugKotlin`: farlo sempre prima di consegnare
+- [L'SDK Android c'è, e c'è pure il telefono](ambiente-senza-toolchain-android.md) — si compila con `./gradlew compileDebugKotlin`, e l'S10e è su adb: davanti a un crash si legge `adb logcat -b crash -d` PRIMA di leggere il codice
 - [Gli heredoc Bash mangiano i backslash](bash-heredoc-mangia-backslash.md) — usare Write/Edit per scrivere file, non `<<'EOF'`
 - [Lavorare a fasi verificabili](lavorare-a-fasi-verificabili.md) — i lavori grossi vanno tagliati per funzione visibile, e ogni fase deve poter essere installata e provata da lui

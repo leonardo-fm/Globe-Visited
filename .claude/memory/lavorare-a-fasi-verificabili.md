@@ -25,4 +25,10 @@ di provabile a mano, e il piano deve dire in fondo a ogni fase **cosa deve
 provare lui**. Non iniziare la fase successiva finche' non ha confermato la
 precedente.
 
+**2026-09-09: il collaudo lo fa lui, e non vuole surrogati.** Gli era stato
+offerto un video dello zoom montato da screenshot headless; ha fermato il lavoro
+a meta' con "no testo io". Quindi: consegnare la modifica e il server acceso,
+non fabbricare registrazioni di come dovrebbe venire. Il tempo speso a montare
+un filmato e' tempo che lui impiega meglio aprendo la pagina.
+
 Vedi [[utente-vuole-compromessi-espliciti]] e [[been-there-stato-lavoro]].

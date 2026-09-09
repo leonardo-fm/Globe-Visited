@@ -1,6 +1,6 @@
 ---
 name: ambiente-senza-toolchain-android
-description: "L'SDK Android ORA c'e': da questa macchina si compila con ./gradlew, e va fatto invece di consegnare a occhio"
+description: "L'SDK Android ORA c'e': da questa macchina si compila con ./gradlew, e l'S10e e' collegato via adb - i crash si leggono da qui, non li detta l'utente"
 metadata:
   node_type: memory
   type: project
@@ -31,7 +31,24 @@ gli errori: un apostrofo non protetto in `strings.xml` e un
 pronta, sempre. I controlli manuali (parentesi bilanciate, `R.string` usate
 contro dichiarate, import orfani) restano utili come primo giro veloce, ma non
 sostituiscono il compilatore. Quello che resta davvero non verificabile da qui
-e' il **comportamento a schermo**: per quello serve l'S10e, vedi
-[[prove-da-fare-sul-telefono]].
+e' il **comportamento a schermo**: per quello serve l'S10e.
+
+**2026-09-09: l'S10e e' collegato via adb.** Verificato:
+
+```
+C:/Users/Lo/AppData/Local/Android/Sdk/platform-tools/adb.exe devices -l
+# RF8MB1K9D7T  device  model:SM_G970F
+
+adb logcat -b crash -d      # lo stack trace vero dell'ultimo crash
+```
+
+**Perche' conta:** fino a quel giorno i crash arrivavano descritti a parole
+("appena esporto, crasha tutto") e si andava per ipotesi. Il primo uso di
+`logcat -b crash` ha dato la riga esatta in tre secondi e ha smentito l'ipotesi
+su cui stavo per lavorare - vedi [[diagnosi-utente-parziali]]. **Davanti a un
+crash sul telefono la prima mossa e' leggere il logcat, non leggere il codice.**
+
+Installare o lanciare l'app da qui resta pero' cosa sua: l'ha chiesto
+esplicitamente, e `adb install` non fa eccezione senza chiederglielo prima.
 
 Vedi [[been-there-stato-lavoro]] e [[bash-heredoc-mangia-backslash]].

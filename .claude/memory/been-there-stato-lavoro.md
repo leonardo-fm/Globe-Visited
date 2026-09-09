@@ -1,6 +1,6 @@
 ---
 name: been-there-stato-lavoro
-description: "Punto in cui si e' fermato il lavoro su Been There al 2026-09-06: l'app gira sul telefono ed e' stato riscritto il rendering"
+description: "Punto in cui si e' fermato il lavoro su Been There al 2026-09-09: schermata impostazioni, colore scelto dall'utente e icona nuova, tutto provato sul telefono"
 metadata: 
   node_type: memory
   type: project
@@ -83,8 +83,64 @@ riazzera anche mentre si scrive.
 Da qui e' nato [[banco-di-prova-web]], per provare i flussi nel browser prima
 di passare al telefono.
 
-L'utente prova lui: chiede esplicitamente di non far girare l'app da qui.
-La verifica possibile da questa macchina resta quella descritta in
-[[ambiente-senza-toolchain-android]].
+**2026-09-08, la ricerca cambia regola.** L'azzeramento automatico e' stato
+**tolto su richiesta dell'utente**: era appena stato fatto funzionare, ma nell'uso
+dava fastidio. Ora la lista dei risultati ha uno stato suo, `resultsOpen`,
+separato dal testo: toccando il globo la lista si chiude e la parola resta
+scritta, si torna sulla barra e la si corregge o si cancella con la X. Toccare
+la barra riapre la lista. Il segnale del tocco sul globo e' un `pointerInput`
+nella passata **Initial** attorno alla WebView, in `BeenThereScreen.kt`, che non
+consuma il gesto: il fuoco resta inaffidabile per il motivo gia' scritto sopra.
+
+**2026-09-08, schermata delle impostazioni** (`ui/SettingsScreen.kt`, file
+nuovo), aperta da un ingranaggio accanto al contatore. Lingua e backup sono
+usciti dal foglio dei visitati, che torna a fare solo l'elenco. Dentro, oltre a
+quelli: **colore dei visitati** (sei pastiglie in `data/VisitedColors.kt` piu' un
+campo dove scrivere un esadecimale qualsiasi), **mostra/nascondi i pin**,
+**azzera tutti i dati** con conferma coi numeri, e **informazioni** con versione
+e crediti (Natural Earth, globe.gl/three.js, Twemoji).
+
+Tre cose non ovvie di quel giro: il colore arriva alla UI nativa da un
+`LocalVisitedColor` nel tema e al globo da `BeenThere.setVisitedColor(hex)`, che
+ridipinge le calotte **e** aggiorna la variabile CSS `--visited`; ogni
+`SetPlaces` verso il globo passa da `emitPlaces()` nel `MainViewModel`, unico
+punto che rispetta i pin nascosti (erano cinque punti sparsi); e "azzera" non
+tocca lingua, colore e preferenze, perche' ricominciare da capo non e'
+reinstallare l'app.
+
+**2026-09-08/09, icona rifatta.** Non piu' una sfera disegnata a mano ma la
+Terra vera: `tools/build-icon.mjs` proietta i confini di `countries.geojson` in
+ortografica e genera i vector drawable - vedi [[icona-generata-dai-confini]].
+
+**Confermato dall'utente sul suo S10e il 2026-09-09: "funziona tutto".** Con
+questo cadono tutte le prove rimaste in sospeso qui sopra (fuoco della ricerca,
+sfarfallio a globo piccolo, giro completo del backup, tempo di avvio col dataset
+grande, fase 3 dei luoghi). Tutto committato da lui: `added options`,
+`added custom color`, `fixed build for phone`, `improoved icon`.
+
+**2026-09-09, zoom piu' ravvicinato.** `MIN_ALT` (nuova costante in
+`index.html`, con `MAX_ALT`) passa da 0,30 a **0,12**: i limiti dei controlli
+non si scrivono piu' in unita' di mondo ma in altitudine, come tutto il resto
+del file. Chiesto dall'utente perche' piantare un pin con la pressione lunga
+vuol dire centrare un punto col polpastrello. Superficie 2,5 volte piu' grande.
+**Confermato da lui: "lo zoom ha funzionato".** Il ragionamento e i due effetti
+collaterali (near dei piani di taglio che tocca il suo minimo, camera dentro la
+sfera dell'atmosfera) stanno in `docs/note-tecniche.md`.
+
+**2026-09-09, il crash "quando esporto".** Non era l'export: era
+`LocalAppResources non fornito`. In `BeenThereScreen.kt` il testo del messaggio
+di esito veniva risolto con `appString` **sopra** `ProvideAppLanguage`, dove il
+CompositionLocal non ha valore e il default e' un `error()`. Con `notice` a null
+il ramo non si percorreva mai, quindi il difetto e' rimasto invisibile fino al
+primo esito. Non riguardava solo l'export ma **anche import e azzeramento**:
+tutti e cinque i `BackupNotice`. Corretto spostando `noticeText` e la
+`LaunchedEffect` dentro il provider. Lezione da ricordare: un CompositionLocal
+letto in un ramo condizionale non si manifesta al primo avvio, si manifesta il
+giorno in cui quel ramo viene percorso.
+
+**Da questa macchina ora si compila** (`./gradlew assembleDebug`): la nota che
+diceva il contrario e' stata corretta, vedi
+[[ambiente-senza-toolchain-android]]. L'app pero' continua a farla girare
+l'utente: chiede esplicitamente di non avviarla da qui.
 
 Vedi [[been-there-decisioni-prodotto]].
